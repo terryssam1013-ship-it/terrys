@@ -1,0 +1,31 @@
+{
+  "_사용법": "각 챕터의 YouTube URL 또는 영상 URL을 채워서 GitHub repo 루트에 업로드. 비워두면 영상 업로드 UI가 표시됨.",
+  "_YouTube_형식_예시": "https://youtu.be/abc123  또는  https://www.youtube.com/watch?v=abc123",
+
+  "L1Ch1": "",
+  "L1Ch2": "",
+  "L1Ch3": "",
+  "L1Ch4": "",
+  "L1Ch5": "",
+  "L1Ch6": "",
+  "L1Ch7": "",
+  "L1Ch8": "",
+  "L1Ch9": "",
+  "L1Ch10": "",
+  "L1Ch11": "",
+  "L1Ch12": "",
+  "L1Ch13": "",
+
+  "L2Ch1": "",
+  "L2Ch2": "",
+  "L2Ch3": "",
+  "L2Ch4": "",
+  "L2Ch5": "",
+  "L2Ch6": "",
+  "L2Ch7": "",
+  "L2Ch8": "",
+  "L2Ch9": "",
+  "L2Ch10": "",
+  "L2Ch11": "",
+  "L2Ch12": ""
+}
