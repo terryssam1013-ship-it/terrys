@@ -1,7 +1,6 @@
 {
-  "_사용법": "각 챕터의 YouTube URL 또는 영상 URL을 채워서 GitHub repo 루트에 업로드. 비워두면 영상 업로드 UI가 표시됨.",
-  "_YouTube_형식_예시": "https://youtu.be/abc123  또는  https://www.youtube.com/watch?v=abc123",
-
+  "_사용법": "각 챕터의 YouTube URL을 채워서 GitHub repo 루트에 업로드. 비워두면 학생 화면에 영상 업로드 UI가 표시됨.",
+  "_YouTube_형식_예시": "https://youtu.be/abc123 또는 https://www.youtube.com/watch?v=abc123",
   "L1Ch1": "",
   "L1Ch2": "",
   "L1Ch3": "",
@@ -15,7 +14,6 @@
   "L1Ch11": "",
   "L1Ch12": "",
   "L1Ch13": "",
-
   "L2Ch1": "",
   "L2Ch2": "",
   "L2Ch3": "",
