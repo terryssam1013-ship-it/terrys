@@ -165,16 +165,19 @@ const RL_STORE = {
     set(k, v){
         if(window.RLStorage && RLStorage.isReady()){
             RLStorage.setItem(k, v);
-            return;
+        } else {
+            // RLStorage 준비 전엔 임시로 localStorage (정상은 init 후라 거의 발생 안 함)
+            localStorage.setItem(k, v);
         }
-        // RLStorage 준비 전엔 임시로 localStorage (정상은 init 후라 거의 발생 안 함)
-        localStorage.setItem(k, v);
+        // 🚀 자동 배포 트리거 (curriculum 키 변경 시)
+        if(window._scheduleAutoDeploy) window._scheduleAutoDeploy(k);
     },
     remove(k){
         if(window.RLStorage && RLStorage.isReady()){
             RLStorage.removeItem(k);
         }
         // localStorage는 그대로 유지 (스냅샷)
+        if(window._scheduleAutoDeploy) window._scheduleAutoDeploy(k);
     },
     keys(){
         // RLStorage(IndexedDB)와 localStorage 양쪽의 키를 모두 모아 반환.
@@ -252,6 +255,7 @@ function renderNav(){
         <div class="nav-tabs">${tabs.map(t=>`<button class="nav-tab ${currentTab===t.id?'active':''}" onclick="goTab('${t.id}')">${t.label}</button>`).join('')}</div>
         <div class="nav-right">
             <span class="api-status ${hasKey?'api-on':'api-off'}"><span style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>${hasKey?'AI 연결됨':'AI 미연결'}</span>
+            <span id="auto-deploy-status" style="display:none"></span>
             ${renderBackupBadge()}
             <button class="btn-ghost btn-sm" onclick="logout()">로그아웃</button>
         </div>
@@ -2020,9 +2024,27 @@ function tabPublish(){
     </div>
     
     ${configured ? `
+    <div class="card" style="padding:18px;margin-bottom:16px;background:#F0FDF4;border:1px solid #BBF7D0">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+            <div>
+                <div style="font-weight:700;color:#047857;font-size:15px;margin-bottom:4px">
+                    🤖 완전 자동 배포 ${LS.g('autodeploy_off')===true?'(꺼짐)':'(켜짐)'}
+                </div>
+                <div style="font-size:12.5px;color:#374151;line-height:1.6">
+                    학원 자료 변경 시 <b>10초 후 자동으로</b> GitHub에 배포돼요.<br>
+                    여러 작업 한꺼번에 해도 마지막 작업 후 10초 기다리면 1번만 배포돼요.
+                </div>
+            </div>
+            <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;background:white;padding:8px 14px;border-radius:8px;border:1px solid #D1D5DB">
+                <input type="checkbox" ${LS.g('autodeploy_off')!==true?'checked':''} onchange="toggleAutoDeploy(this.checked)" style="width:18px;height:18px;accent-color:#10B981">
+                <span style="font-weight:600;font-size:13px">자동 배포</span>
+            </label>
+        </div>
+    </div>
+    
     <div class="card" style="padding:24px;margin-bottom:20px;background:linear-gradient(135deg,#10B981 0%,#059669 100%);color:white;text-align:center">
-        <div style="font-size:18px;font-weight:700;margin-bottom:6px">🚀 원클릭 자동 배포</div>
-        <div style="font-size:13px;opacity:0.95;margin-bottom:18px">학생들에게 즉시 반영 (다운로드 / 업로드 작업 없이)</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">🚀 즉시 배포</div>
+        <div style="font-size:13px;opacity:0.95;margin-bottom:18px">기다리지 않고 지금 바로 배포하기</div>
         <button class="btn" onclick="autoDeployCurriculum()" style="background:white;color:#047857;padding:14px 32px;font-size:16px;font-weight:700;border-radius:8px">🚀 지금 배포하기</button>
     </div>
     ` : ''}
@@ -2330,6 +2352,173 @@ async function autoDeployCurriculum(){
 // 안전한 HTML escaping for modal inputs
 function escAttr(s){return String(s||'').replace(/[&"<>]/g,c=>({'&':'&amp;','"':'&quot;','<':'&lt;','>':'&gt;'}[c]));}
 function escHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// ========== 🤖 자동 배포 시스템 ==========
+// 학원 자료 변경 후 10초 지나면 자동으로 GitHub에 배포
+let _autoDeployTimer = null;
+let _autoDeployStatus = 'idle'; // 'idle' | 'pending' | 'deploying' | 'success' | 'error'
+let _autoDeployMsg = '';
+let _autoDeployActive = false; // 첫 사용자 액션 후에만 활성화 (페이지 로드 시 자동 트리거 방지)
+
+window._scheduleAutoDeploy = function(changedKey){
+    if(!_autoDeployActive) return; // 페이지 초기 로드 중에는 무시
+    if(!isCurriculumKey(changedKey)) return; // 학원 자료 키가 아니면 무시
+    
+    const gh = getGitHubConfig();
+    if(!gh.token || !gh.owner || !gh.repo) return; // GitHub 설정 안 됨
+    
+    // 자동 배포 토글 OFF면 무시
+    if(LS.g('autodeploy_off') === true) return;
+    
+    // 10초 디바운스
+    if(_autoDeployTimer) clearTimeout(_autoDeployTimer);
+    setAutoDeployStatus('pending', '곧 배포...');
+    _autoDeployTimer = setTimeout(()=>{
+        silentAutoDeploy();
+    }, 10000);
+};
+
+function setAutoDeployStatus(status, msg){
+    _autoDeployStatus = status;
+    _autoDeployMsg = msg || '';
+    // 상단 nav의 상태 표시 업데이트
+    const el = document.getElementById('auto-deploy-status');
+    if(el){
+        const styles = {
+            idle: 'color:#9CA3AF;background:transparent',
+            pending: 'color:#92400E;background:#FEF3C7;border:1px solid #FDE68A',
+            deploying: 'color:#1E40AF;background:#DBEAFE;border:1px solid #93C5FD',
+            success: 'color:#047857;background:#ECFDF5;border:1px solid #6EE7B7',
+            error: 'color:#991B1B;background:#FEE2E2;border:1px solid #FCA5A5'
+        };
+        const icons = {idle:'',pending:'⏳',deploying:'🔄',success:'✅',error:'❌'};
+        el.style.cssText = 'padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;'+styles[status]||styles.idle;
+        el.innerHTML = msg ? `${icons[status]} ${msg}` : '';
+        el.style.display = msg ? 'inline-block' : 'none';
+    }
+}
+
+async function silentAutoDeploy(){
+    if(_autoDeployStatus === 'deploying') return; // 이미 진행 중이면 스킵
+    
+    const gh = getGitHubConfig();
+    if(!gh.token || !gh.owner || !gh.repo){
+        setAutoDeployStatus('error', '설정 없음');
+        return;
+    }
+    
+    setAutoDeployStatus('deploying', '배포 중...');
+    
+    try{
+        // curriculum.json 빌드
+        const keys = RL_STORE.keys().filter(isCurriculumKey);
+        const items = {};
+        let totalSize = 0;
+        keys.forEach(k=>{
+            try{
+                const v = RL_STORE.get(k);
+                if(v !== null){
+                    items[k] = v;
+                    totalSize += v.length;
+                }
+            } catch(e){}
+        });
+        
+        const now = new Date();
+        const exported = {
+            _meta: {
+                version: now.toISOString(),
+                generated: now.toLocaleString('ko-KR'),
+                generator: '엠베스트SE 동탄남광장 어드민 (자동 배포)',
+                keyCount: keys.length,
+                sizeBytes: totalSize
+            },
+            _items: items
+        };
+        const json = JSON.stringify(exported, null, 2);
+        
+        // 시크릿 패턴 검사
+        const secretPatterns = [
+            /sk-ant-[A-Za-z0-9_-]{20,}/,
+            /\bsk-(?!ant-)[A-Za-z0-9]{40,}/,
+            /gh[pousr]_[A-Za-z0-9]{20,}/,
+            /AIza[A-Za-z0-9_-]{35}/
+        ];
+        for(const pat of secretPatterns){
+            if(pat.test(json)){
+                setAutoDeployStatus('error', '시크릿 감지 - 수동 확인 필요');
+                console.error('Silent deploy aborted: secret pattern detected in curriculum.json');
+                return;
+            }
+        }
+        
+        // 현재 SHA 가져오기
+        let currentSha = null;
+        try{
+            const checkRes = await fetch(
+                `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json?ref=${gh.branch}`,
+                {headers: {'Authorization': `Bearer ${gh.token}`, 'Accept': 'application/vnd.github+json'}}
+            );
+            if(checkRes.ok){
+                const checkData = await checkRes.json();
+                currentSha = checkData.sha;
+            }
+        } catch(e){}
+        
+        // PUT 업로드
+        const body = {
+            message: `Auto-deploy curriculum.json (${keys.length} items)`,
+            content: utf8ToBase64(json),
+            branch: gh.branch
+        };
+        if(currentSha) body.sha = currentSha;
+        
+        const putRes = await fetch(
+            `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json`,
+            {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${gh.token}`,
+                    'Accept': 'application/vnd.github+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            }
+        );
+        
+        if(!putRes.ok){
+            const err = await putRes.json().catch(()=>({}));
+            throw new Error(err.message || ('HTTP ' + putRes.status));
+        }
+        
+        LS.s('rl_last_deploy', now.toISOString());
+        setAutoDeployStatus('success', `방금 배포됨 (${keys.length}개)`);
+        
+        // 5초 후 상태 메시지 사라짐
+        setTimeout(()=>{
+            if(_autoDeployStatus === 'success') setAutoDeployStatus('idle', '');
+        }, 5000);
+    } catch(e){
+        console.error('Silent auto-deploy failed:', e);
+        const errShort = e.message.length > 40 ? e.message.substring(0,40)+'...' : e.message;
+        setAutoDeployStatus('error', `실패: ${errShort}`);
+    }
+}
+
+// 페이지 로드 후 약간 지나면 사용자 액션 활성화
+setTimeout(()=>{ _autoDeployActive = true; }, 2000);
+
+function toggleAutoDeploy(enabled){
+    if(enabled){
+        LS.s('autodeploy_off', false);
+        setAutoDeployStatus('idle','');
+    } else {
+        LS.s('autodeploy_off', true);
+        if(_autoDeployTimer){ clearTimeout(_autoDeployTimer); _autoDeployTimer=null; }
+        setAutoDeployStatus('idle','');
+    }
+    render();
+}
 
 function previewCurriculumKeys(){
     const keys = RL_STORE.keys().filter(isCurriculumKey).sort();
