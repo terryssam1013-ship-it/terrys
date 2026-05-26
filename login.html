@@ -32,6 +32,27 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .subject-chip.active{background:var(--green-light);border-color:var(--green);color:var(--green-dark);font-weight:600;}
 .subject-dot{width:8px;height:8px;border-radius:50%;}
 @media(max-width:480px){.login-card{padding:28px 24px;}.academy-name{font-size:20px;}.logo-img{max-width:180px;}}
+/* ============ 📱 모바일 최적화 추가 ============ */
+@media(max-width:768px){
+  .login-container{max-width:100%;padding:0 16px}
+  .login-card{padding:28px 22px;border-radius:14px}
+  .field-input{padding:13px 14px;font-size:16px} /* iOS 자동 줌 방지 위해 16px */
+  .login-btn{padding:14px;font-size:16px;min-height:48px}
+  .logo-area{margin-bottom:24px}
+  .academy-name{font-size:20px}
+  .academy-sub{font-size:12px}
+  .subjects{gap:8px;flex-wrap:wrap;margin-top:24px}
+  .subject-chip{padding:8px 14px;font-size:12px}
+}
+@media(max-width:380px){
+  .login-container{padding:0 12px}
+  .login-card{padding:22px 18px}
+  .logo-img{max-width:160px}
+  .academy-name{font-size:18px}
+  .field-input{padding:12px}
+  .subjects{justify-content:center}
+  .subject-chip{padding:7px 12px;font-size:11.5px}
+}
 </style>
 </head>
 <body>
@@ -56,6 +77,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div class="login-footer">회원가입은 필요 없습니다. 선생님이 계정을 만들어드립니다.</div>
 </div>
 <script src="rl-storage.js"></script>
+<script src="curriculum-sync.js"></script>
 <script>
 function todayStr(){return new Date().toISOString().slice(0,10);}
 
@@ -135,6 +157,12 @@ async function bootstrap(){
     }catch(e){
         console.error('IndexedDB init failed, fallback to localStorage:',e);
     }
+    
+    // 📦 GitHub의 curriculum.json 자동 동기화 (학생 계정 정보 등 학원 자료 로드)
+    if(window.syncCurriculum){
+        try{await window.syncCurriculum();}catch(e){console.warn('Curriculum sync failed:',e);}
+    }
+    
     initData();
     
     // 무한 리다이렉트 방지 — 1초 내 자동 로그인 직후 다시 login에 왔으면 자동 로그인 중단
