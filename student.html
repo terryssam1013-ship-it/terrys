@@ -281,12 +281,15 @@ u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:
   /* 버튼 — 터치 친화적 (최소 44px 높이) */
   button{padding:10px 14px;font-size:14px;min-height:42px}
   .btn-sm{padding:8px 12px;font-size:13px;min-height:36px}
-  /* 표 — 가로 스크롤로 모바일에서도 읽기 가능 */
-  .sched,.tbl,table{font-size:12px}
-  /* 학습 스케줄 표 — 가로 스크롤 컨테이너 */
-  .sched-wrap,.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -10px;padding:0 10px}
-  /* 스케줄 셀 작게 */
-  .sched-cell{padding:5px 9px;font-size:11px;min-width:50px;min-height:28px;gap:3px}
+  /* 표 — 가로 스크롤 없이 화면에 맞춤 */
+  .sched,.tbl,table{font-size:11px;width:100%;table-layout:fixed}
+  .sched-wrap,.table-wrap{overflow:visible;margin:0;padding:0}
+  /* 스케줄 셀 — 화면 폭에 맞게 축소 */
+  .sched-cell{padding:4px 4px;font-size:10px;min-width:0;min-height:26px;gap:2px;width:100%;box-sizing:border-box}
+  /* 스케줄 헤더 패딩 축소 */
+  .sched-th-base,.sched-head-main th{padding:8px 2px;font-size:10px}
+  .sched-head-sub th{padding:5px 2px;font-size:9px}
+  .sched-td{padding:7px 2px}
   /* 학습 다음 카드 — 세로로 배치 */
   .next-homework-card{flex-direction:column;align-items:stretch;gap:10px;padding:12px 14px}
   /* 히어로 통계 — 줄바꿈 허용 */
@@ -304,18 +307,21 @@ u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:
   /* 플렉스 갭 줄이기 */
   .flex-gap{gap:6px;flex-wrap:wrap}
   /* 표 안의 셀 패딩 축소 */
-  th,td{padding:6px 4px!important}
+  th,td{padding:6px 3px!important}
 }
 @media(max-width:480px){
   .container{padding:10px 8px 50px}
   .nav-inner{height:52px}
   h1{font-size:18px!important}
   h2{font-size:16px!important}
-  .card{padding:12px}
-  .sched-cell{padding:4px 7px;font-size:10px;min-width:45px;min-height:26px}
-  th,td{padding:5px 3px!important;font-size:11px}
-  /* 작은 화면에서 가로 스크롤 안내 그림자 */
-  .sched-wrap::after,.table-wrap::after{content:'';position:absolute;right:0;top:0;bottom:0;width:24px;pointer-events:none;background:linear-gradient(to left,rgba(255,255,255,0.9),transparent)}
+  .card{padding:12px 8px}
+  /* 폰 폭에서 더 작게 — 가로 스크롤 없이 8칸 다 보이게 */
+  .sched,.tbl,table{font-size:10px}
+  .sched-cell{padding:3px 2px;font-size:9px;min-width:0;min-height:24px;border-radius:4px}
+  .sched-th-base,.sched-head-main th{padding:6px 1px;font-size:9px}
+  .sched-head-sub th{padding:4px 1px;font-size:8px}
+  .sched-td{padding:5px 1px}
+  th,td{padding:4px 2px!important;font-size:10px}
 }
 </style>
 </head>
@@ -931,13 +937,6 @@ function viewDashboard(s){
     <div class="hero">
         <h2>안녕하세요 ${s.name||''} 학생님 👋</h2>
         <p>학습 일정대로 진행해 주세요. 오늘도 파이팅 하세요!</p>
-        <div class="hero-stats">
-            <div class="hero-stat"><div class="k">📖 리딩</div><div class="v">${bookName||'-'}</div></div>
-            <div class="hero-stat"><div class="k">📝 문법</div><div class="v">${s.textbooks?.grammar||'-'}</div></div>
-            <div class="hero-stat"><div class="k">🔤 단어</div><div class="v">${(()=>{const vId=s.textbooks?.vocab;if(!vId)return '-';const vi=LS.g('vocab_index')||{};return vi[vId]?.name||vId;})()}</div></div>
-            <div class="hero-stat"><div class="k">수업 요일</div><div class="v">${(s.days||[]).join('·')}반</div></div>
-            <div class="hero-stat"><div class="k">시작일</div><div class="v">${s.startDate||'미지정'}</div></div>
-        </div>
     </div>
     <div class="card">
         <div class="flex flex-between mb-16">
@@ -6085,8 +6084,9 @@ window.addEventListener('DOMContentLoaded',async()=>{
     // RLStorage 준비 대기 (IndexedDB 데이터 로드 완료까지)
     try{await RLStorage.init();}catch(e){console.error('RLStorage init failed, fallback to localStorage:',e);}
     
-    // 📦 GitHub의 curriculum.json 자동 동기화 (없으면 조용히 패스)
-    if(window.syncCurriculum){
+    // 미리보기 모드는 어드민이 즉시 확인용이므로 GitHub 동기화 건너뜀
+    // (어드민의 로컬 데이터가 가장 최신이므로 동기화하면 오히려 데이터가 옛 GitHub 데이터로 덮어쓰여짐)
+    if(!isPreview() && window.syncCurriculum){
         try{await window.syncCurriculum();}catch(e){console.warn('Curriculum sync failed:',e);}
     }
     
