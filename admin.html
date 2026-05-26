@@ -2177,6 +2177,70 @@ function utf8ToBase64(str){
     return btoa(binary);
 }
 
+// SHA 충돌 시 자동 재시도하는 업로드 함수
+async function uploadCurriculumWithRetry(gh, json, keyCount, now, maxRetries){
+    maxRetries = maxRetries === undefined ? 2 : maxRetries;
+    const contentB64 = utf8ToBase64(json);
+    
+    for(let attempt = 0; attempt <= maxRetries; attempt++){
+        // 매번 최신 SHA를 가져옴 (충돌 방지)
+        let currentSha = null;
+        try{
+            const checkRes = await fetch(
+                `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json?ref=${gh.branch}&t=${Date.now()}`,
+                {headers: {'Authorization': `Bearer ${gh.token}`, 'Accept': 'application/vnd.github+json'}}
+            );
+            if(checkRes.ok){
+                const checkData = await checkRes.json();
+                currentSha = checkData.sha;
+            }
+        } catch(e){}
+        
+        const body = {
+            message: `Update curriculum.json (${keyCount} items, ${now.toLocaleString('ko-KR')})`,
+            content: contentB64,
+            branch: gh.branch
+        };
+        if(currentSha) body.sha = currentSha;
+        
+        const putRes = await fetch(
+            `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json`,
+            {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${gh.token}`,
+                    'Accept': 'application/vnd.github+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            }
+        );
+        
+        // 성공
+        if(putRes.ok){
+            return {ok:true, response:putRes};
+        }
+        
+        // SHA 충돌 (409 conflict 또는 422 with "sha" in message)인지 확인 → 재시도
+        let isConflict = (putRes.status === 409 || putRes.status === 422);
+        if(isConflict && attempt < maxRetries){
+            const errClone = putRes.clone();
+            const errBody = await errClone.json().catch(()=>({}));
+            const msg = errBody.message || '';
+            // 명확히 SHA 충돌인지 확인
+            if(/sha|conflict|expected|update_or_create/i.test(msg) || putRes.status === 409){
+                console.warn(`Upload conflict on attempt ${attempt+1}, retrying...`);
+                await new Promise(r => setTimeout(r, 500 + attempt*500)); // 점진적 대기
+                continue;
+            }
+        }
+        
+        // 다른 종류 에러 또는 최종 실패 → 응답 반환 (호출자가 에러 처리)
+        return {ok:false, response:putRes};
+    }
+    return {ok:false, response:null};
+}
+
 async function autoDeployCurriculum(){
     const gh = getGitHubConfig();
     if(!gh.token || !gh.owner || !gh.repo){
@@ -2256,44 +2320,13 @@ async function autoDeployCurriculum(){
             return;
         }
         
-        // Step 2: Get current file SHA (needed for update)
-        btn.innerHTML = '⏳ GitHub 정보 가져오는 중...';
-        let currentSha = null;
-        try{
-            const checkRes = await fetch(
-                `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json?ref=${gh.branch}`,
-                {headers: {'Authorization': `Bearer ${gh.token}`, 'Accept': 'application/vnd.github+json'}}
-            );
-            if(checkRes.ok){
-                const checkData = await checkRes.json();
-                currentSha = checkData.sha;
-            }
-            // 404 means file doesn't exist yet — that's fine, create it
-        } catch(e){
-            console.warn('Could not get current SHA:', e);
-        }
-        
-        // Step 3: PUT new content
+        // Step 2-3: Upload with SHA retry on conflict
         btn.innerHTML = '⏳ 업로드 중... (' + (totalSize/1024/1024).toFixed(1) + 'MB)';
-        const body = {
-            message: `Update curriculum.json (${keys.length} items, ${now.toLocaleString('ko-KR')})`,
-            content: utf8ToBase64(json),
-            branch: gh.branch
-        };
-        if(currentSha) body.sha = currentSha;
-        
-        const putRes = await fetch(
-            `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json`,
-            {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `Bearer ${gh.token}`,
-                    'Accept': 'application/vnd.github+json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(body)
-            }
-        );
+        const result = await uploadCurriculumWithRetry(gh, json, keys.length, now);
+        if(!result.ok){
+            // 에러는 uploadCurriculumWithRetry에서 throw됨, 여기 도달 안 함
+        }
+        const putRes = result.response;
         
         if(!putRes.ok){
             const err = await putRes.json().catch(()=>({}));
@@ -2327,7 +2360,7 @@ async function autoDeployCurriculum(){
             throw e2;
         }
         
-        const result = await putRes.json();
+        const putData = await putRes.json();
         LS.s('rl_last_deploy', now.toISOString());
         
         alert(`✅ 배포 완료!\n\n• 항목 수: ${keys.length}개\n• 크기: ${(totalSize/1024/1024).toFixed(2)}MB\n• 시각: ${now.toLocaleString('ko-KR')}\n\n학생들이 사이트 새로고침 시 자동 반영됩니다 (1~2분 후 적용).`);
@@ -2452,43 +2485,13 @@ async function silentAutoDeploy(){
             }
         }
         
-        // 현재 SHA 가져오기
-        let currentSha = null;
-        try{
-            const checkRes = await fetch(
-                `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json?ref=${gh.branch}`,
-                {headers: {'Authorization': `Bearer ${gh.token}`, 'Accept': 'application/vnd.github+json'}}
-            );
-            if(checkRes.ok){
-                const checkData = await checkRes.json();
-                currentSha = checkData.sha;
-            }
-        } catch(e){}
+        // 현재 SHA + PUT 업로드 (SHA 충돌 시 자동 재시도)
+        const result = await uploadCurriculumWithRetry(gh, json, keys.length, now);
+        const putRes = result.response;
         
-        // PUT 업로드
-        const body = {
-            message: `Auto-deploy curriculum.json (${keys.length} items)`,
-            content: utf8ToBase64(json),
-            branch: gh.branch
-        };
-        if(currentSha) body.sha = currentSha;
-        
-        const putRes = await fetch(
-            `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/curriculum.json`,
-            {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `Bearer ${gh.token}`,
-                    'Accept': 'application/vnd.github+json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(body)
-            }
-        );
-        
-        if(!putRes.ok){
-            const err = await putRes.json().catch(()=>({}));
-            throw new Error(err.message || ('HTTP ' + putRes.status));
+        if(!putRes || !putRes.ok){
+            const err = putRes ? await putRes.json().catch(()=>({})) : {};
+            throw new Error(err.message || ('HTTP ' + (putRes?putRes.status:'no response')));
         }
         
         LS.s('rl_last_deploy', now.toISOString());
@@ -5417,8 +5420,12 @@ async function testKey(){
     try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:50,messages:[{role:"user",content:"Say OK"}]})});
     if(r.ok)alert('✅ 연결 성공!');else{const d=await r.json().catch(()=>({}));alert('❌ 실패: '+(d.error?.message||r.status));}}catch(e){alert('❌ 실패: '+e.message);}
 }
-function previewStudent(id){
+async function previewStudent(id){
     // 새 창에서 student.html을 학생 ID로 미리보기 모드 열기
+    // 먼저 IndexedDB 쓰기 완료를 기다림 (학생 추가 직후 race condition 방지)
+    try{
+        if(window.RLStorage && RLStorage.flush) await RLStorage.flush();
+    }catch(e){}
     window.open('student.html?preview='+encodeURIComponent(id),'_blank');
 }
 // ========================================================================
@@ -5674,7 +5681,17 @@ window.addEventListener('load',()=>{
     startAutoBackupTimer();
 });
 
-function logout(){localStorage.removeItem('rl_current_user');window.location.href='login.html';}
+async function logout(){
+    // IndexedDB 쓰기 큐 비우기 (페이지 이동 전에 저장 완료 보장)
+    try{ if(window.RLStorage && RLStorage.flush) await RLStorage.flush(); }catch(e){}
+    // 자동 배포 진행 중이면 즉시 실행 (페이지 떠나기 전에 GitHub로 보내기)
+    if(_autoDeployTimer){
+        clearTimeout(_autoDeployTimer); _autoDeployTimer=null;
+        try{ await silentAutoDeploy(); }catch(e){}
+    }
+    localStorage.removeItem('rl_current_user');
+    window.location.href='login.html';
+}
 
 window.addEventListener('DOMContentLoaded',()=>{
     if(!getUser()||getUser().role!=='admin'){window.location.href='login.html';return;}
