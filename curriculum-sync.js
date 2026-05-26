@@ -27,7 +27,10 @@
         }
         
         try{
-            const res = await fetch(CURRICULUM_URL, {cache:'no-cache'});
+            // 캐시 회피 — GitHub Pages CDN이 옛 curriculum.json을 서빙하지 않도록 
+            // timestamp 쿼리 파라미터를 매번 다르게 추가
+            const url = CURRICULUM_URL + '?_t=' + Date.now();
+            const res = await fetch(url, {cache:'no-store'});
             if(!res.ok){
                 console.log('[Curriculum] curriculum.json not found on server (skip)');
                 return {ok:false, reason:'not-found'};
