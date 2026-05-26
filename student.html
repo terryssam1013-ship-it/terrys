@@ -260,11 +260,69 @@ u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:
 .modal-content{background:var(--white);border-radius:var(--radius);padding:28px;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
 
 @media(max-width:768px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}.reading-layout{grid-template-columns:1fr}.nav-menu{display:none}.pres-box,.summ-box,.options-wrap{margin-left:0}}
+
+/* ============ 📱 모바일 화면 전반 최적화 ============ */
+@media(max-width:768px){
+  /* 컨테이너 — 양옆 여백 축소 */
+  .container{padding:14px 10px 50px;max-width:100%}
+  /* 네비게이션 — 컴팩트하게 */
+  .nav{padding:0 10px;position:sticky;top:0}
+  .nav-inner{height:56px;flex-wrap:wrap;gap:8px}
+  .nav-logo img{height:26px}
+  .nav-logo .academy{font-size:13px;line-height:1.2}
+  .nav-logo .sub{font-size:10px}
+  .nav-right{gap:6px}
+  /* 카드 — 패딩 축소 */
+  .card{padding:14px;margin-bottom:14px;border-radius:10px}
+  /* 헤딩 — 크기 조정 */
+  h1{font-size:20px!important}
+  h2{font-size:17px!important}
+  h3{font-size:15px!important}
+  /* 버튼 — 터치 친화적 (최소 44px 높이) */
+  button{padding:10px 14px;font-size:14px;min-height:42px}
+  .btn-sm{padding:8px 12px;font-size:13px;min-height:36px}
+  /* 표 — 가로 스크롤로 모바일에서도 읽기 가능 */
+  .sched,.tbl,table{font-size:12px}
+  /* 학습 스케줄 표 — 가로 스크롤 컨테이너 */
+  .sched-wrap,.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -10px;padding:0 10px}
+  /* 스케줄 셀 작게 */
+  .sched-cell{padding:5px 9px;font-size:11px;min-width:50px;min-height:28px;gap:3px}
+  /* 학습 다음 카드 — 세로로 배치 */
+  .next-homework-card{flex-direction:column;align-items:stretch;gap:10px;padding:12px 14px}
+  /* 히어로 통계 — 줄바꿈 허용 */
+  .hero-stats{gap:6px}
+  .hero-stats>*{font-size:12px;padding:6px 10px!important}
+  /* 모달 — 화면에 맞춤 */
+  .modal{padding:10px}
+  .modal-content{padding:18px;max-height:94vh;border-radius:14px}
+  /* 학습 단계 카드 */
+  .step-card,.train-step{padding:12px;gap:10px}
+  .step-num,.train-step-num{width:32px;height:32px;font-size:13px}
+  /* 문제 카드 */
+  .q-stem{font-size:14px;line-height:1.6}
+  .q-num{width:28px;height:28px;font-size:13px}
+  /* 플렉스 갭 줄이기 */
+  .flex-gap{gap:6px;flex-wrap:wrap}
+  /* 표 안의 셀 패딩 축소 */
+  th,td{padding:6px 4px!important}
+}
+@media(max-width:480px){
+  .container{padding:10px 8px 50px}
+  .nav-inner{height:52px}
+  h1{font-size:18px!important}
+  h2{font-size:16px!important}
+  .card{padding:12px}
+  .sched-cell{padding:4px 7px;font-size:10px;min-width:45px;min-height:26px}
+  th,td{padding:5px 3px!important;font-size:11px}
+  /* 작은 화면에서 가로 스크롤 안내 그림자 */
+  .sched-wrap::after,.table-wrap::after{content:'';position:absolute;right:0;top:0;bottom:0;width:24px;pointer-events:none;background:linear-gradient(to left,rgba(255,255,255,0.9),transparent)}
+}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script src="rl-storage.js"></script>
+<script src="curriculum-sync.js"></script>
 <script>
 // ========== Phase 2: IndexedDB 통합 ==========
 RLStorage.init().then(()=>{
@@ -1726,7 +1784,7 @@ function renderSchedule(s){
     </div>`:'';
     const homeworkCard=_hwCard(readingHW,'#3B82F6')+_hwCard(grammarHW,'#A855F7')+_hwCard(vocabHW,'#F59E0B');
     
-    return `${homeworkCard}<table class="sched sched-pretty">
+    return `${homeworkCard}<div class="sched-wrap" style="position:relative"><table class="sched sched-pretty">
         <thead>
             <tr class="sched-head-main">
                 <th rowspan="2" class="sched-th-base">날짜</th>
@@ -1745,7 +1803,7 @@ function renderSchedule(s){
             </tr>
         </thead>
         <tbody>${rows}</tbody>
-    </table>
+    </table></div>
     ${state.schedTab==='week'||state.schedTab==='monthly'?(()=>{
         if(state.schedTab!=='week')return '';
         // 간단한 완료 체크: 모든 셀이 점수(N점) 표시이면 완료
@@ -6007,14 +6065,14 @@ function viewProgress(s){
     <div class="card">
         <h3>상세 기록</h3>
         ${sp.length===0?'<p style="color:var(--text3);font-size:13px">아직 학습 기록이 없습니다</p>':
-        `<table class="sched"><thead><tr><th>날짜</th><th>Unit</th><th>항목</th><th>점수</th><th>소요시간</th></tr></thead><tbody>
+        `<div class="table-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table class="sched"><thead><tr><th>날짜</th><th>Unit</th><th>항목</th><th>점수</th><th>소요시간</th></tr></thead><tbody>
         ${sp.map(p=>`<tr>
             <td>${new Date(p.timestamp).toLocaleDateString('ko-KR')}</td>
             <td>${(p.unit||'-').toString().replace('unit','Unit ')}</td>
             <td>${p.title}</td>
             <td style="font-weight:700">${p.totalQuestions>0?Math.round(p.correctAnswers/p.totalQuestions*100)+'점':'-'}</td>
             <td>${p.timeSpent?Math.floor(p.timeSpent/60)+'분 '+p.timeSpent%60+'초':'-'}</td>
-        </tr>`).join('')}</tbody></table>`}
+        </tr>`).join('')}</tbody></table></div>`}
     </div>`;
 }
 
@@ -6026,6 +6084,11 @@ function logout(){
 window.addEventListener('DOMContentLoaded',async()=>{
     // RLStorage 준비 대기 (IndexedDB 데이터 로드 완료까지)
     try{await RLStorage.init();}catch(e){console.error('RLStorage init failed, fallback to localStorage:',e);}
+    
+    // 📦 GitHub의 curriculum.json 자동 동기화 (없으면 조용히 패스)
+    if(window.syncCurriculum){
+        try{await window.syncCurriculum();}catch(e){console.warn('Curriculum sync failed:',e);}
+    }
     
     if(isPreview()){
         // 미리보기 모드: 학생 데이터만 있으면 진입

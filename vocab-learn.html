@@ -234,6 +234,40 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;background:#f5f
 .dc-choice-correct .dc-choice-num{background:#10B981;color:#fff}
 .dc-choice-wrong{background:#FEE2E2!important;border-color:#EF4444!important;color:#991B1B}
 .dc-choice-wrong .dc-choice-num{background:#EF4444;color:#fff}
+
+/* ============ 📱 모바일 화면 전반 최적화 ============ */
+@media(max-width:768px){
+  body{font-size:14px}
+  .topbar{padding:10px 12px;gap:8px}
+  .topbar-back{padding:6px 12px;font-size:13px}
+  .topbar-title{font-size:14px}
+  .topbar-meta{font-size:11px}
+  .app{padding:14px 12px}
+  .card{padding:14px;border-radius:10px}
+  h1{font-size:19px!important}
+  h2{font-size:17px!important}
+  h3{font-size:15px!important}
+  button{min-height:42px;padding:10px 14px;font-size:14px}
+  .word-en{font-size:30px!important}
+  .word-ko{font-size:18px!important}
+  .word-example{font-size:13px!important;line-height:1.6}
+  .flash-card{padding:24px 16px;min-height:280px}
+  .dc-choice{padding:12px 14px;font-size:14px;gap:10px}
+  .dc-choice-num{width:24px;height:24px;font-size:12px}
+  .preview-banner{padding:8px 12px;font-size:12px}
+}
+@media(max-width:480px){
+  .app{padding:10px 8px}
+  .topbar{padding:8px 10px}
+  .card{padding:11px}
+  .word-en{font-size:26px!important}
+  .word-ko{font-size:16px!important}
+  .flash-card{padding:18px 12px;min-height:240px}
+  .dc-choice{padding:10px 12px;font-size:13px}
+  h1{font-size:17px!important}
+  h2{font-size:15px!important}
+  button{padding:8px 12px;font-size:13px}
+}
 </style>
 </head>
 <body>
@@ -249,6 +283,7 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;background:#f5f
 <div class="app" id="app"></div>
 
 <script src="rl-storage.js"></script>
+<script src="curriculum-sync.js"></script>
 <script>
 // ========== Phase 2: IndexedDB 통합 ==========
 RLStorage.init().then(()=>{
@@ -3156,6 +3191,12 @@ function relearnRealExam(){
 // RLStorage 준비를 기다린 후 데이터 로드 (IndexedDB가 활성화된 후 정상 작동)
 async function initVocabLearn(){
     try{await RLStorage.init();}catch(e){console.error('RLStorage init failed:',e);}
+    
+    // 📦 GitHub의 curriculum.json 자동 동기화
+    if(window.syncCurriculum){
+        try{await window.syncCurriculum();}catch(e){console.warn('Curriculum sync failed:',e);}
+    }
+    
     loaded=loadDay();
     if(loaded.error){
         document.getElementById('app').innerHTML=`<div class="error-box"><div style="font-size:36px;margin-bottom:10px">⚠️</div><div style="font-size:16px;font-weight:700;margin-bottom:6px">${loaded.error}</div><div style="font-size:13px">관리자에게 문의하세요.</div></div>`;

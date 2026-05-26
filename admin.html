@@ -226,6 +226,7 @@ function render(){
         currentTab==='grammar'?tabGrammar():
         currentTab==='vocab'?tabVocab():
         currentTab==='videos'?tabVideos():
+        currentTab==='publish'?tabPublish():
         currentTab==='progress'?tabProgress():
         currentTab==='settings'?tabSettings():''
     }</div>`+(modal?renderModal():'');
@@ -239,6 +240,7 @@ function renderNav(){
         {id:'grammar',label:'문법'},
         {id:'vocab',label:'단어'},
         {id:'videos',label:'📺 영상'},
+        {id:'publish',label:'📦 배포'},
         {id:'progress',label:'현황'},
         {id:'settings',label:'설정'}
     ];
@@ -1825,7 +1827,9 @@ function getBookPointUrl(bookId,p){
 //   - video-config.json 다운로드 → GitHub repo 루트에 업로드 → 모든 학생 자동 표시
 // ============================================================
 function getVideoConfigLocal(){
-    try{return JSON.parse(LS.g('namog_video_config_admin')||'{}');}catch(e){return {};}
+    // LS.g already returns the parsed value (or null). Don't double-parse.
+    const v = LS.g('namog_video_config_admin');
+    return (v && typeof v === 'object') ? v : {};
 }
 function setVideoConfigLocal(cfg){LS.s('namog_video_config_admin',cfg);}
 
@@ -1941,6 +1945,152 @@ function downloadVideoConfig(){
         alert(`📥 video-config.json 다운로드 완료\n• 채워진 챕터: ${count}개\n\n다음 단계:\n1. 다운로드된 파일을 GitHub repo의 루트 폴더에 업로드\n2. 기존 파일이 있으면 덮어쓰기\n3. commit + push\n\n학생들은 챕터 페이지 새로고침하면 영상 자동 표시됩니다.`);
     },300);
 }
+
+// ========== 📦 학생 자료 배포 (curriculum.json) ==========
+// 학원 자료(지문/단어/챕터/학생계정 등)를 모아 curriculum.json으로 다운로드
+// → GitHub에 올리면 모든 학생이 자기 기기에서 자동 동기화
+function isCurriculumKey(k){
+    if(!k || !k.startsWith('rl_')) return false;
+    // 민감/관리자 전용 키 — 제외
+    if(k === 'rl_apikey') return false;
+    if(k === 'rl_backup') return false;
+    if(k === 'rl_current_user') return false;
+    if(k === 'rl_progress') return false; // 어드민이 집계한 학생 진도
+    if(k === 'rl_curriculum_version') return false; // 버전 마커
+    // 학생 본인 진도/상태 — 제외 (각 학생 기기에서 따로 저장)
+    if(/_progress$/.test(k)) return false;
+    if(k.startsWith('rl_train_')) return false;
+    if(k.startsWith('rl_weekly_')) return false;
+    if(k.startsWith('rl_done_')) return false;
+    if(k.startsWith('rl_inprog_')) return false;
+    if(k.startsWith('rl_active_')) return false;
+    if(k.startsWith('rl_vc_')) return false;
+    // 나머지 (rl_users, rl_levels, rl_textbooks, rl_articles*, rl_vocab*, rl_namog*, rl_trtype_*, rl_assess_*, rl_pv_<id>, rl_gr_<id>, rl_settings 등) — 포함
+    return true;
+}
+
+function tabPublish(){
+    const allKeys = RL_STORE.keys();
+    const currKeys = allKeys.filter(isCurriculumKey);
+    let totalSize = 0;
+    currKeys.forEach(k=>{ try{ totalSize += (RL_STORE.get(k)||'').length; }catch(e){} });
+    const sizeMB = (totalSize/1024/1024).toFixed(2);
+    
+    // 카테고리별 카운트
+    const cats = {
+        '학생 계정': currKeys.filter(k=>k==='rl_users').length,
+        '레벨/교재 설정': currKeys.filter(k=>k==='rl_levels'||k==='rl_textbooks'||k==='rl_settings').length,
+        '리딩 지문': currKeys.filter(k=>k.startsWith('rl_article')).length,
+        '단어장': currKeys.filter(k=>k.startsWith('rl_vocab')).length,
+        '문법 (나모그)': currKeys.filter(k=>k.startsWith('rl_namog')||(k.startsWith('rl_gr_')&&!k.endsWith('_progress'))).length,
+        '학생 배정': currKeys.filter(k=>k.startsWith('rl_pv_')&&!k.endsWith('_progress')).length,
+        '기타 설정': currKeys.filter(k=>k.startsWith('rl_trtype_')||k.startsWith('rl_assess_')).length
+    };
+    
+    return `<div class="flex flex-between mb-24">
+        <div>
+            <h2>📦 학생 자료 배포</h2>
+            <div class="page-desc" style="margin:0">학원 자료를 모아 <b>curriculum.json</b>으로 다운로드 → GitHub repo 루트에 업로드하면 모든 학생이 자기 폰/PC에서 자동으로 같은 자료를 봅니다.</div>
+        </div>
+    </div>
+    
+    <div class="card" style="background:#EFF6FF;border:1px solid #93C5FD;padding:16px;margin-bottom:20px">
+        <div style="font-weight:700;color:#1E40AF;margin-bottom:8px">📌 사용 방법</div>
+        <ol style="margin:0 0 0 20px;padding:0;font-size:13px;color:#1E3A8A;line-height:1.8">
+            <li>아래 <b>[📥 curriculum.json 다운로드]</b> 클릭</li>
+            <li>다운로드된 <code>curriculum.json</code> 파일을 GitHub repo 루트에 업로드 (기존 있으면 덮어쓰기)</li>
+            <li>commit + push</li>
+            <li>학생들이 사이트 새로고침하면 자동 동기화됨 (다음 방문부터 적용)</li>
+            <li>자료 추가/수정할 때마다 같은 방식으로 다시 배포</li>
+        </ol>
+    </div>
+    
+    <div class="card" style="padding:20px;margin-bottom:20px">
+        <h3 style="margin:0 0 16px;font-size:15px">📊 배포 대상 자료 (${currKeys.length}개 항목, ${sizeMB}MB)</h3>
+        <table class="tbl" style="font-size:13px">
+            <thead><tr><th>카테고리</th><th style="text-align:right">항목 수</th></tr></thead>
+            <tbody>
+                ${Object.entries(cats).map(([cat,n])=>`<tr><td>${cat}</td><td style="text-align:right;color:${n>0?'#10B981':'#9CA3AF'}">${n}</td></tr>`).join('')}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="card" style="background:#FEF3C7;border:1px solid #FCD34D;padding:14px;margin-bottom:20px;font-size:13px;color:#92400E;line-height:1.6">
+        ⚠️ <b>제외되는 항목:</b> API 키, 학생 본인 진도(점수/풀이 기록), 로그인 정보. 학생 진도는 각 학생 기기에 따로 저장됩니다.
+    </div>
+    
+    <div class="card" style="background:#FEE2E2;border:1px solid #FCA5A5;padding:14px;margin-bottom:20px;font-size:13px;color:#991B1B;line-height:1.6">
+        🔒 <b>개인정보 주의:</b> 학생 비밀번호도 포함됩니다. GitHub repo가 공개라면 누구나 볼 수 있어요. 학원 내부 자료라 큰 문제는 아니지만 알아두세요.
+    </div>
+    
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn" onclick="exportCurriculum()" style="background:#10B981;color:white;padding:14px 24px;font-size:15px;font-weight:700">📥 curriculum.json 다운로드</button>
+        <button class="btn-sm btn-ghost" onclick="previewCurriculumKeys()">🔍 포함되는 키 목록 보기</button>
+    </div>`;
+}
+
+function previewCurriculumKeys(){
+    const keys = RL_STORE.keys().filter(isCurriculumKey).sort();
+    const list = keys.map((k,i)=>{
+        let size = 0;
+        try{ size = (RL_STORE.get(k)||'').length; }catch(e){}
+        return `${i+1}. ${k} <span style="color:#9CA3AF">(${size>1024?Math.round(size/1024)+'KB':size+'B'})</span>`;
+    }).join('<br>');
+    modal={
+        title:'📋 배포 대상 키 (' + keys.length + '개)',
+        body:`<div style="max-height:60vh;overflow:auto;font-family:monospace;font-size:12px;line-height:1.7">${list}</div>`,
+        footer:`<button class="btn" onclick="closeModal()">닫기</button>`
+    };
+    render();
+}
+
+function exportCurriculum(){
+    const keys = RL_STORE.keys().filter(isCurriculumKey);
+    const items = {};
+    let totalSize = 0;
+    
+    keys.forEach(k=>{
+        try{
+            const v = RL_STORE.get(k);
+            if(v !== null){
+                items[k] = v;
+                totalSize += v.length;
+            }
+        } catch(e){
+            console.warn('Failed to read key:', k, e);
+        }
+    });
+    
+    const now = new Date();
+    const version = now.toISOString();
+    const exported = {
+        _meta:{
+            version: version,
+            generated: now.toLocaleString('ko-KR'),
+            generator: '엠베스트SE 동탄남광장 어드민',
+            keyCount: keys.length,
+            sizeBytes: totalSize,
+            description: '학원 자료 배포용 파일. GitHub repo 루트에 업로드하면 모든 학생이 자동 동기화됨. (학생 본인의 진도는 포함 안 됨.)'
+        },
+        _items: items
+    };
+    
+    const json = JSON.stringify(exported, null, 2);
+    const blob = new Blob([json], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'curriculum.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    setTimeout(()=>{
+        alert(`📥 curriculum.json 다운로드 완료\n\n• 항목 수: ${keys.length}개\n• 크기: ${(totalSize/1024/1024).toFixed(2)}MB\n• 버전: ${version}\n\n다음 단계:\n1. 다운로드된 파일을 GitHub repo 루트에 업로드\n2. 기존 파일이 있으면 덮어쓰기\n3. commit + push\n\n학생들이 사이트 다음 방문 시 자동 동기화됩니다.`);
+    }, 300);
+}
+
 
 function tabGrammar(){
     if(view.grammarBook){
