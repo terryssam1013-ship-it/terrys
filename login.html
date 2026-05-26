@@ -158,9 +158,15 @@ async function bootstrap(){
         console.error('IndexedDB init failed, fallback to localStorage:',e);
     }
     
-    // 📦 GitHub의 curriculum.json 자동 동기화 (학생 계정 정보 등 학원 자료 로드)
-    if(window.syncCurriculum){
+    // 📦 GitHub의 curriculum.json 자동 동기화
+    // 단, 로컬에 학생 데이터가 있으면 건너뜀 (어드민이 추가한 신규 학생이 옛 데이터로 덮어쓰여 사라지는 문제 방지)
+    // 학생들이 처음 사이트에 들어올 때만 자동 부트스트랩됨. 이후엔 student.html에서 동기화함.
+    const hasLocalUsers = !!RL_STORE.get('rl_users');
+    if(!hasLocalUsers && window.syncCurriculum){
+        console.log('[login] 로컬 학생 데이터 없음 — GitHub에서 동기화');
         try{await window.syncCurriculum();}catch(e){console.warn('Curriculum sync failed:',e);}
+    } else if(hasLocalUsers){
+        console.log('[login] 로컬 학생 데이터 있음 — 동기화 건너뜀');
     }
     
     initData();
