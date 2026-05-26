@@ -1957,6 +1957,12 @@ function isCurriculumKey(k){
     if(k === 'rl_current_user') return false;
     if(k === 'rl_progress') return false; // 어드민이 집계한 학생 진도
     if(k === 'rl_curriculum_version') return false; // 버전 마커
+    // GitHub 자동 배포 관련 키 (토큰/설정) — 절대 배포 금지!
+    if(k.includes('gh_token')) return false;
+    if(k.includes('gh_owner')) return false;
+    if(k.includes('gh_repo')) return false;
+    if(k.includes('gh_branch')) return false;
+    if(k.includes('last_deploy')) return false;
     // 학생 본인 진도/상태 — 제외 (각 학생 기기에서 따로 저장)
     if(/_progress$/.test(k)) return false;
     if(k.startsWith('rl_train_')) return false;
@@ -2269,7 +2275,34 @@ async function autoDeployCurriculum(){
         
         if(!putRes.ok){
             const err = await putRes.json().catch(()=>({}));
-            throw new Error(err.message || ('HTTP ' + putRes.status));
+            // GitHub Push Protection error may contain bypass URL
+            let bypassUrl = null;
+            let secretType = null;
+            try{
+                if(err.message && /push protection|secret/i.test(err.message)){
+                    // Look for bypass URL in metadata
+                    const metadata = err.metadata || err.errors || [];
+                    if(Array.isArray(metadata)){
+                        for(const m of metadata){
+                            if(m.bypass_url || m.url){ bypassUrl = m.bypass_url || m.url; }
+                            if(m.type || m.secret_type){ secretType = m.type || m.secret_type; }
+                        }
+                    }
+                    if(!bypassUrl && err.documentation_url){
+                        bypassUrl = err.documentation_url;
+                    }
+                }
+            }catch(_){}
+            
+            const errMsg = err.message || ('HTTP ' + putRes.status);
+            const fullErr = JSON.stringify(err, null, 2);
+            console.error('GitHub API error:', fullErr);
+            
+            const e2 = new Error(errMsg);
+            e2.fullResponse = fullErr;
+            e2.bypassUrl = bypassUrl;
+            e2.secretType = secretType;
+            throw e2;
         }
         
         const result = await putRes.json();
@@ -2279,7 +2312,15 @@ async function autoDeployCurriculum(){
         render();
     } catch(e){
         console.error('Deploy failed:', e);
-        alert(`❌ 배포 실패\n\n${e.message}\n\n원인 가능성:\n• 토큰 만료 → 설정에서 새 토큰 발급/입력\n• 인터넷 연결\n• GitHub 서비스 일시 장애`);
+        let msg = `❌ 배포 실패\n\n${e.message}`;
+        if(e.bypassUrl){
+            msg += `\n\n🔓 해결 방법:\n위 메시지에 따르면 GitHub의 Push Protection이 작동했어요.\n\n아래 주소를 새 탭에 복사해서 여세요:\n${e.bypassUrl}\n\n그 페이지에서 "Allow secret" 또는 "False positive" 선택하시면 한 번만 우회할 수 있어요.`;
+        } else if(/push protection|secret/i.test(e.message)){
+            msg += `\n\n🔓 Push Protection 문제로 보여요. 다음을 확인하세요:\n\n1. GitHub repo Settings → Code security\n2. "Push protection" 항목 → "Enable" 버튼이 보이면 OFF, "Disable" 버튼이 보이면 ON\n3. ON 상태면 클릭해서 OFF로 바꾸기\n4. Rules → Rulesets 에 따로 규칙 있는지 확인\n\nF12 → Console 탭에 자세한 에러가 출력돼 있어요. 그것도 도움이 됩니다.`;
+        } else {
+            msg += `\n\n원인 가능성:\n• 토큰 만료 → 설정에서 새 토큰 발급/입력\n• 인터넷 연결\n• GitHub 서비스 일시 장애`;
+        }
+        alert(msg);
     } finally {
         btn.disabled = false;
         btn.innerHTML = orig;
