@@ -281,6 +281,11 @@ u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:
   /* 버튼 — 터치 친화적 (최소 44px 높이) */
   button{padding:10px 14px;font-size:14px;min-height:42px}
   .btn-sm{padding:8px 12px;font-size:13px;min-height:36px}
+  /* 학습일정 헤더 — 모바일에선 세로 스택 */
+  .card .flex.flex-between.mb-16{flex-direction:column;align-items:stretch;gap:10px}
+  /* 학습일정 탭 — 한 줄에 4개 다 보이게 */
+  .seg{display:flex;width:100%;padding:2px;gap:2px}
+  .seg-btn{flex:1;padding:7px 4px;font-size:11px;min-height:34px;white-space:nowrap}
   /* 표 — 가로 스크롤 없이 화면에 맞춤 */
   .sched,.tbl,table{font-size:11px;width:100%;table-layout:fixed}
   .sched-wrap,.table-wrap{overflow:visible;margin:0;padding:0}
@@ -290,8 +295,12 @@ u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:
   .sched-th-base,.sched-head-main th{padding:8px 2px;font-size:10px}
   .sched-head-sub th{padding:5px 2px;font-size:9px}
   .sched-td{padding:7px 2px}
-  /* 학습 다음 카드 — 세로로 배치 */
-  .next-homework-card{flex-direction:column;align-items:stretch;gap:10px;padding:12px 14px}
+  /* 다음 숙제 카드 — 콤팩트 (세로 폭 줄임) */
+  .next-homework-card{flex-direction:row;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;border-radius:8px}
+  .nhw-badge{font-size:9px;padding:2px 6px;margin-bottom:2px}
+  .nhw-title{font-size:13px;margin-bottom:0;line-height:1.3}
+  .nhw-meta{font-size:11px}
+  .nhw-cta{padding:6px 10px!important;font-size:12px!important;min-height:32px!important;flex-shrink:0}
   /* 히어로 통계 — 줄바꿈 허용 */
   .hero-stats{gap:6px}
   .hero-stats>*{font-size:12px;padding:6px 10px!important}
@@ -322,6 +331,12 @@ u{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:
   .sched-head-sub th{padding:4px 1px;font-size:8px}
   .sched-td{padding:5px 1px}
   th,td{padding:4px 2px!important;font-size:10px}
+  /* 다음 숙제 카드 — 더 콤팩트 */
+  .next-homework-card{padding:7px 10px;margin-bottom:6px}
+  .nhw-title{font-size:12.5px}
+  .nhw-meta{font-size:10.5px}
+  /* 학습일정 탭 — 작은 폰에서 더 압축 */
+  .seg-btn{font-size:10.5px;padding:6px 3px}
 }
 </style>
 </head>
@@ -1651,7 +1666,7 @@ function renderSchedule(s){
         
         rows+=`<tr${rowClass}>
             <td class="sched-td cell-date"><div class="sched-date-num">${dateStr}</div></td>
-            <td class="sched-td cell-day">${kn}${sess.isWeeklyTest?' <span style="font-size:10px;background:#F59E0B;color:#fff;padding:1px 5px;border-radius:6px;margin-left:2px;font-weight:700">평가</span>':''}</td>
+            <td class="sched-td cell-day">${kn}${sess.isWeeklyTest?' <span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:50%;margin-left:3px;vertical-align:middle"></span>':''}</td>
             ${readingCells}
             <td class="sched-td cell-grammar-train">${grammarTrainCell}</td>
             <td class="sched-td cell-grammar-exam">${grammarExamCell}</td>
