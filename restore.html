@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>데이터 복원 - 엠베스트SE 동탄남광장</title>
+<script src="rl-storage.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -19,7 +20,7 @@
     background: white;
     border-radius: 16px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-    max-width: 560px;
+    max-width: 580px;
     width: 100%;
     padding: 40px;
   }
@@ -34,7 +35,17 @@
   .subtitle {
     color: #6b7280;
     font-size: 14px;
-    margin-bottom: 32px;
+    margin-bottom: 16px;
+  }
+  .badge {
+    display: inline-block;
+    background: #ecfdf5;
+    color: #047857;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 24px;
   }
   .step {
     background: #f9fafb;
@@ -74,7 +85,8 @@
     cursor: pointer;
     transition: all 0.2s;
     background: #f0fdf4;
-    margin: 20px 0;
+    margin: 16px 0;
+    display: block;
   }
   .file-area:hover {
     background: #dcfce7;
@@ -151,21 +163,26 @@
     color: #1d4ed8;
     border: 1px solid #93c5fd;
   }
+  .status.warning {
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fcd34d;
+  }
   .progress-bar {
     width: 100%;
-    height: 8px;
+    height: 10px;
     background: #e5e7eb;
-    border-radius: 4px;
+    border-radius: 5px;
     overflow: hidden;
     margin-top: 8px;
   }
   .progress-bar-fill {
     height: 100%;
-    background: #10b981;
+    background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
     width: 0%;
     transition: width 0.2s;
   }
-  .warning {
+  .warning-box {
     background: #fef3c7;
     border: 1px solid #fcd34d;
     border-radius: 10px;
@@ -175,64 +192,149 @@
     color: #92400e;
     line-height: 1.6;
   }
+  .info-box {
+    background: #eff6ff;
+    border: 1px solid #93c5fd;
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: #1e40af;
+    line-height: 1.5;
+  }
   .next-link {
     display: inline-block;
     margin-top: 12px;
     background: #047857;
     color: white;
-    padding: 10px 20px;
+    padding: 12px 24px;
     border-radius: 8px;
     text-decoration: none;
     font-weight: 600;
-    font-size: 14px;
+    font-size: 15px;
   }
   .next-link:hover {
     background: #065f46;
+  }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #f9fafb;
+    border-radius: 8px;
+    margin: 12px 0;
+    font-size: 14px;
+    color: #374151;
+    cursor: pointer;
+  }
+  .checkbox-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #10b981;
+  }
+  .init-status {
+    text-align: center;
+    color: #6b7280;
+    font-size: 14px;
+    padding: 20px;
+  }
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #d1d5db;
+    border-top-color: #10b981;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>
 </head>
 <body>
   <div class="container">
     <h1>💾 데이터 복원</h1>
-    <p class="subtitle">엠베스트SE 동탄남광장 - 백업 파일 불러오기</p>
+    <p class="subtitle">엠베스트SE 동탄남광장 — 백업 파일 불러오기</p>
+    <span class="badge">✓ IndexedDB 방식 (용량 무제한)</span>
 
-    <div class="warning">
-      ⚠️ <strong>주의:</strong> 복원하면 현재 이 사이트에 저장된 모든 데이터가 백업 파일의 내용으로 <strong>덮어쓰기</strong> 됩니다. 처음 한 번만 사용하세요.
+    <div id="initBox" class="init-status">
+      <span class="spinner"></span> 저장소 초기화 중...
     </div>
 
-    <div class="step">
-      <div><span class="step-num">1</span><span class="step-title">백업 파일 선택</span></div>
-      <div class="step-desc">컴퓨터에서 백업 파일(.json)을 선택해주세요</div>
+    <div id="mainBox" style="display: none;">
+      <div class="info-box" id="currentInfo">
+        현재 사이트 데이터: <strong id="currentKeys">-</strong>개 / <strong id="currentSize">-</strong>
+      </div>
+
+      <div class="warning-box">
+        ⚠️ <strong>주의:</strong> 복원은 현재 사이트의 기존 데이터를 백업 파일 내용으로 <strong>덮어쓰기</strong> 합니다.
+      </div>
+
+      <div class="step">
+        <div><span class="step-num">1</span><span class="step-title">백업 파일 선택</span></div>
+        <div class="step-desc">PC의 백업 파일(.json)을 선택해주세요</div>
+      </div>
+
+      <label for="fileInput" class="file-area" id="dropArea">
+        <p>📁 클릭해서 백업 파일 선택</p>
+        <p class="hint">또는 파일을 여기로 드래그하세요</p>
+      </label>
+      <input type="file" id="fileInput" accept=".json,application/json">
+      <div class="file-info" id="fileInfo"></div>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="clearFirst" checked>
+        <span>복원 전에 기존 데이터 모두 지우기 <strong>(권장)</strong></span>
+      </label>
+
+      <div class="step" style="margin-top: 20px;">
+        <div><span class="step-num">2</span><span class="step-title">복원 실행</span></div>
+        <div class="step-desc">아래 버튼을 누르면 시작됩니다</div>
+      </div>
+
+      <button class="btn btn-primary" id="restoreBtn" disabled>📥 복원하기</button>
+
+      <div class="status" id="status"></div>
     </div>
-
-    <label for="fileInput" class="file-area" id="dropArea">
-      <p>📁 클릭해서 백업 파일 선택</p>
-      <p class="hint">또는 파일을 여기로 드래그하세요</p>
-    </label>
-    <input type="file" id="fileInput" accept=".json,application/json">
-    <div class="file-info" id="fileInfo"></div>
-
-    <div class="step" style="margin-top: 20px;">
-      <div><span class="step-num">2</span><span class="step-title">복원 실행</span></div>
-      <div class="step-desc">아래 버튼을 누르면 데이터가 복원됩니다</div>
-    </div>
-
-    <button class="btn btn-primary" id="restoreBtn" disabled>📥 복원하기</button>
-
-    <div class="status" id="status"></div>
   </div>
 
 <script>
+  const initBox = document.getElementById('initBox');
+  const mainBox = document.getElementById('mainBox');
   const fileInput = document.getElementById('fileInput');
   const fileInfo = document.getElementById('fileInfo');
   const dropArea = document.getElementById('dropArea');
   const restoreBtn = document.getElementById('restoreBtn');
   const status = document.getElementById('status');
+  const currentKeys = document.getElementById('currentKeys');
+  const currentSize = document.getElementById('currentSize');
+  const clearFirst = document.getElementById('clearFirst');
 
   let backupData = null;
   let fileName = '';
 
-  // Drag and drop
+  async function initStorage() {
+    try {
+      if (typeof RLStorage === 'undefined') {
+        throw new Error('rl-storage.js를 찾을 수 없어요. 같은 폴더에 있는지 확인해주세요.');
+      }
+      await RLStorage.init();
+      const usage = RLStorage.getUsage();
+      currentKeys.textContent = usage.keys;
+      currentSize.textContent = usage.mb + ' MB';
+      initBox.style.display = 'none';
+      mainBox.style.display = 'block';
+    } catch (err) {
+      initBox.innerHTML = `<div style="color:#b91c1c">❌ 초기화 실패: ${err.message}</div>`;
+    }
+  }
+
+  initStorage();
+
   ['dragenter', 'dragover'].forEach(ev => {
     dropArea.addEventListener(ev, (e) => {
       e.preventDefault();
@@ -265,7 +367,7 @@
 
     fileName = file.name;
     fileInfo.style.display = 'block';
-    fileInfo.textContent = `📄 ${file.name} (${(file.size/1024/1024).toFixed(2)} MB) - 읽는 중...`;
+    fileInfo.textContent = `📄 ${file.name} (${(file.size/1024/1024).toFixed(2)} MB) — 읽는 중...`;
     restoreBtn.disabled = true;
     status.style.display = 'none';
 
@@ -274,13 +376,12 @@
       try {
         const text = e.target.result;
         backupData = JSON.parse(text);
-
         if (typeof backupData !== 'object' || backupData === null) {
-          throw new Error('형식이 올바르지 않습니다');
+          throw new Error('파일 형식이 올바르지 않습니다');
         }
-
         const keyCount = Object.keys(backupData).length;
-        fileInfo.textContent = `✅ ${file.name} - 총 ${keyCount}개 데이터 확인됨`;
+        const totalSize = Object.values(backupData).reduce((s, v) => s + (typeof v === 'string' ? v.length : 0), 0);
+        fileInfo.textContent = `✅ ${file.name} — ${keyCount.toLocaleString()}개 데이터 / ${(totalSize/1024/1024).toFixed(2)} MB`;
         restoreBtn.disabled = false;
       } catch (err) {
         fileInfo.style.display = 'none';
@@ -288,9 +389,7 @@
         showStatus('error', `❌ 파일을 읽을 수 없어요: ${err.message}`);
       }
     };
-    reader.onerror = () => {
-      showStatus('error', '❌ 파일 읽기 실패');
-    };
+    reader.onerror = () => showStatus('error', '❌ 파일 읽기 실패');
     reader.readAsText(file, 'UTF-8');
   }
 
@@ -303,67 +402,97 @@
   restoreBtn.addEventListener('click', async () => {
     if (!backupData) return;
 
-    const confirmMsg = `백업 파일 "${fileName}"의 ${Object.keys(backupData).length}개 데이터로 복원합니다.\n\n현재 이 사이트의 데이터는 덮어쓰기 됩니다.\n\n계속하시겠어요?`;
+    const count = Object.keys(backupData).length;
+    const confirmMsg = `백업 파일 "${fileName}"의 ${count.toLocaleString()}개 데이터로 복원합니다.\n\n${clearFirst.checked ? '⚠️ 현재 사이트의 기존 데이터는 먼저 모두 삭제됩니다.\n\n' : ''}계속할까요?`;
     if (!confirm(confirmMsg)) return;
 
     restoreBtn.disabled = true;
     fileInput.disabled = true;
 
-    const keys = Object.keys(backupData);
-    const total = keys.length;
-    let done = 0;
-    let errors = 0;
-
-    showStatus('progress', `
-      ⏳ 복원 중... (0 / ${total})
-      <div class="progress-bar"><div class="progress-bar-fill" id="pbFill"></div></div>
-    `);
-
-    // Restore in batches to keep UI responsive
-    const BATCH = 50;
-    for (let i = 0; i < keys.length; i += BATCH) {
-      const slice = keys.slice(i, i + BATCH);
-      for (const key of slice) {
-        try {
-          const val = backupData[key];
-          // Values in backup are already strings (the form stored in localStorage)
-          if (typeof val === 'string') {
-            localStorage.setItem(key, val);
-          } else {
-            localStorage.setItem(key, JSON.stringify(val));
-          }
-          done++;
-        } catch (err) {
-          console.error('Restore error for key:', key, err);
-          errors++;
+    try {
+      if (clearFirst.checked) {
+        showStatus('progress', '🗑️ 기존 데이터 삭제 중...');
+        const existingKeys = RLStorage.keys();
+        for (const k of existingKeys) {
+          RLStorage.removeItem(k);
         }
+        try {
+          const lsKeys = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('rl_')) lsKeys.push(k);
+          }
+          lsKeys.forEach(k => localStorage.removeItem(k));
+        } catch(e) {}
+        await RLStorage.flush();
+        await new Promise(r => setTimeout(r, 200));
       }
 
-      // Update progress
-      const pct = Math.round((done / total) * 100);
+      const keys = Object.keys(backupData);
+      const total = keys.length;
+      let done = 0;
+      let errors = 0;
+
       showStatus('progress', `
-        ⏳ 복원 중... (${done} / ${total})
-        <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+        ⏳ 복원 중... (0 / ${total.toLocaleString()})
+        <div class="progress-bar"><div class="progress-bar-fill" style="width:0%"></div></div>
       `);
 
-      // Yield to UI
-      await new Promise(r => setTimeout(r, 0));
-    }
+      const BATCH = 100;
+      for (let i = 0; i < keys.length; i += BATCH) {
+        const slice = keys.slice(i, i + BATCH);
+        for (const key of slice) {
+          try {
+            let val = backupData[key];
+            if (typeof val !== 'string') val = JSON.stringify(val);
+            RLStorage.setItem(key, val);
+            done++;
+          } catch (err) {
+            console.error('Restore error for key:', key, err);
+            errors++;
+          }
+        }
 
-    if (errors === 0) {
-      showStatus('success', `
-        ✅ <strong>복원 완료!</strong><br>
-        총 ${done}개 데이터가 성공적으로 복원되었습니다.<br>
-        이제 어드민 페이지에서 모든 자료를 확인할 수 있어요.<br>
-        <a href="admin.html" class="next-link">→ 어드민 페이지로 이동</a>
+        if (i > 0 && i % 500 === 0) {
+          await RLStorage.flush();
+        }
+
+        const pct = Math.round((done / total) * 100);
+        showStatus('progress', `
+          ⏳ 복원 중... (${done.toLocaleString()} / ${total.toLocaleString()})
+          <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+        `);
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      showStatus('progress', `
+        💾 저장 마무리 중... (${done.toLocaleString()}개 완료)
+        <div class="progress-bar"><div class="progress-bar-fill" style="width:100%"></div></div>
       `);
-    } else {
-      showStatus('success', `
-        ⚠️ <strong>복원 완료 (일부 오류)</strong><br>
-        성공: ${done}개 / 실패: ${errors}개<br>
-        대부분의 데이터는 복원되었습니다. 어드민에서 확인해주세요.<br>
-        <a href="admin.html" class="next-link">→ 어드민 페이지로 이동</a>
-      `);
+      await RLStorage.flush();
+      await new Promise(r => setTimeout(r, 300));
+
+      const finalUsage = RLStorage.getUsage();
+      if (errors === 0) {
+        showStatus('success', `
+          ✅ <strong>복원 완료!</strong><br>
+          총 <strong>${done.toLocaleString()}개</strong> 데이터가 성공적으로 복원되었습니다.<br>
+          저장소: ${finalUsage.keys.toLocaleString()}개 키 / ${finalUsage.mb} MB<br>
+          <a href="admin.html" class="next-link">→ 어드민 페이지로 이동</a>
+        `);
+      } else {
+        showStatus('warning', `
+          ⚠️ <strong>복원 완료 (일부 오류)</strong><br>
+          성공: ${done.toLocaleString()}개 / 실패: ${errors}개<br>
+          저장소: ${finalUsage.keys.toLocaleString()}개 키 / ${finalUsage.mb} MB<br>
+          어드민에서 확인해주세요.<br>
+          <a href="admin.html" class="next-link">→ 어드민 페이지로 이동</a>
+        `);
+      }
+    } catch (err) {
+      showStatus('error', `❌ 복원 실패: ${err.message}<br><br>F5로 새로고침 후 다시 시도해주세요.`);
+      restoreBtn.disabled = false;
+      fileInput.disabled = false;
     }
   });
 </script>
