@@ -2191,6 +2191,43 @@ async function autoDeployCurriculum(){
         };
         const json = JSON.stringify(exported, null, 2);
         
+        // 🔒 안전 점검: 시크릿/API 키 패턴 검사
+        const secretPatterns = [
+            {name: 'Anthropic API Key (sk-ant-)', regex: /sk-ant-[A-Za-z0-9_-]{20,}/},
+            {name: 'OpenAI API Key (sk-...)', regex: /\bsk-(?!ant-)[A-Za-z0-9]{40,}/},
+            {name: 'GitHub Token (ghp_/gho_)', regex: /gh[pousr]_[A-Za-z0-9]{20,}/},
+            {name: 'Google API Key (AIza)', regex: /AIza[A-Za-z0-9_-]{35}/}
+        ];
+        
+        const foundSecrets = [];
+        for(const sp of secretPatterns){
+            if(sp.regex.test(json)){
+                // 어느 키에 들어있는지 찾기
+                let foundIn = '(찾는 중...)';
+                let sample = '';
+                for(const k of keys){
+                    const v = items[k] || '';
+                    if(typeof v === 'string'){
+                        const m = v.match(sp.regex);
+                        if(m){
+                            foundIn = k;
+                            sample = m[0].substring(0,12) + '...';
+                            break;
+                        }
+                    }
+                }
+                foundSecrets.push({type: sp.name, key: foundIn, sample});
+            }
+        }
+        
+        if(foundSecrets.length > 0){
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            const detail = foundSecrets.map(s => `• ${s.type}\n  위치: ${s.key}\n  샘플: ${s.sample}`).join('\n\n');
+            alert(`🚨 배포 중단 — 데이터에 API 키 또는 시크릿이 포함되어 있어요!\n\n${detail}\n\n원인:\n실수로 API 키를 학생 정보, 단어장 등 다른 곳에 붙여넣으셨을 수 있어요.\n\n해결:\n어드민에서 해당 항목을 찾아 API 키 제거 후 다시 시도\n(API 키는 설정 탭에만 두기)`);
+            return;
+        }
+        
         // Step 2: Get current file SHA (needed for update)
         btn.innerHTML = '⏳ GitHub 정보 가져오는 중...';
         let currentSha = null;
