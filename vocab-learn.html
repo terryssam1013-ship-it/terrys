@@ -567,6 +567,11 @@ function _progressStorageKey(){
         const pid=typeof getPreviewId==='function'?getPreviewId():'pv';
         return 'rl_pv_'+pid+'_vocab_progress';
     }
+    // 학생 본인 ID로 분리 → 기기 간 동기화 가능
+    try{
+        const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');
+        if(u&&u.id&&u.role==='student') return 'rl_vocab_progress_'+u.id;
+    }catch(e){}
     return 'rl_vocab_progress';
 }
 
@@ -1713,6 +1718,11 @@ function saveDayCheckScore(deckId,dayId,score,passed){
 // 데이체크 진행 상태 저장 (이어 풀기용)
 function _dayCheckProgressKey(){
     if(isPreview)return 'rl_pv_'+studentId+'_vc_daycheck_progress';
+    // 학생 본인 ID로 분리 → 기기 간 동기화 가능 + 학원 공용 기기에서 학생간 데이터 충돌 방지
+    try{
+        const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');
+        if(u&&u.id&&u.role==='student') return 'rl_vc_daycheck_progress_'+u.id;
+    }catch(e){}
     return 'rl_vc_daycheck_progress';
 }
 function saveDayCheckProgress(){
@@ -3254,18 +3264,33 @@ async function initVocabLearn(){
         }
     }catch(e){}
     
-    // 2) 데이체크 통과 결과 화면 분기 — 제거됨
-    //    학생 본인이든 어드민 미리보기든 진입 시 항상 플래시모드 시작.
-    //    결과 화면은 학습 종료 직후에만 표시 (옛 데이터로 인한 오인식 방지).
+    // 2) 플래시모드 완료 상태 복원 — 결과 화면(renderSummary)로 진입
+    //    플래시모드 끝낸 학생은 결과 페이지에서 게임/데이체크 버튼 보고 다음 단계 진행
     
-    // 3) 학습 진도 (knewSet) 복원 — 진행 중 데이터만 사용
-    //    외운 단어 있으면 그 단어들은 건너뛰고 나머지 단어부터 학습 (진도 유지)
-    //    모든 단어 외운 상태로 저장돼 있어도 결과 화면 안 보이고 처음부터 다시 학습
+    // 3) 학습 진도 (knewSet) 복원
+    //    progress.done이 true면 → 결과 화면 표시 (마지막 학습 위치)
+    //    아니면 안 외운 단어부터 이어서 학습
     //    어드민 미리보기는 진도 무시하고 항상 처음부터
     const progress=isPreview?null:loadLearningProgress();
     
     if(progress&&progress.knew&&progress.knew.length>0){
         const knewSet=new Set(progress.knew);
+        
+        // ✨ 플래시모드 완료 상태 → 결과 화면(renderSummary)로 진입
+        //    게임 모드 / 데이체크 버튼이 결과 화면 안에 있음
+        if(progress.done === true){
+            startLearning(loaded.deck, loaded.day);
+            state.knewSet = knewSet;
+            state.knew = knewSet.size;
+            state.didntKnowSet = new Set(progress.didntKnow || []);
+            state.didntKnow = state.didntKnowSet.size;
+            // 모든 단어 완료된 결과 화면 (renderSummary가 isFullyCompleted 분기 들어가도록)
+            state.reviewQueue = [];
+            state.done = true;
+            render();
+            return;
+        }
+        
         const remaining=state.words.filter(w=>!knewSet.has(w.en));
         if(remaining.length>0){
             // 일부만 외움 → 안 외운 단어부터 다시 학습
