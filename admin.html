@@ -1975,7 +1975,12 @@ function isCurriculumKey(k){
     if(k.startsWith('rl_inprog_')) return false;
     if(k.startsWith('rl_active_')) return false;
     if(k.startsWith('rl_vc_')) return false;
-    // 나머지 (rl_users, rl_levels, rl_textbooks, rl_articles*, rl_vocab*, rl_namog*, rl_trtype_*, rl_assess_*, rl_pv_<id>, rl_gr_<id>, rl_settings 등) — 포함
+    // ⚠️ 중요: 학생 본인 문법 학습 진도 (pt_*, sc_*, exam_*, wsc_*, wex_*) — 절대 배포 X
+    // 배포되면 학생 기기의 실제 진도를 덮어써서 학습 데이터 손실 발생
+    if(k.startsWith('rl_gr_')) return false;
+    // 학생 본인 기출문제 응시 이력 (각 학생 기기에 저장)
+    if(k.startsWith('rl_gichul_history_')) return false;
+    // 나머지 (rl_users, rl_levels, rl_textbooks, rl_articles*, rl_vocab*, rl_namog*, rl_trtype_*, rl_assess_*, rl_pv_<id>, rl_settings 등) — 포함
     return true;
 }
 
@@ -1992,7 +1997,7 @@ function tabPublish(){
         '레벨/교재 설정': currKeys.filter(k=>k==='rl_levels'||k==='rl_textbooks'||k==='rl_settings').length,
         '리딩 지문': currKeys.filter(k=>k.startsWith('rl_article')).length,
         '단어장': currKeys.filter(k=>k.startsWith('rl_vocab')).length,
-        '문법 (나모그)': currKeys.filter(k=>k.startsWith('rl_namog')||(k.startsWith('rl_gr_')&&!k.endsWith('_progress'))).length,
+        '문법 (나모그)': currKeys.filter(k=>k.startsWith('rl_namog')).length,
         '학생 배정': currKeys.filter(k=>k.startsWith('rl_pv_')&&!k.endsWith('_progress')).length,
         '기타 설정': currKeys.filter(k=>k.startsWith('rl_trtype_')||k.startsWith('rl_assess_')).length
     };
