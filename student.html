@@ -658,6 +658,8 @@ document.addEventListener('visibilitychange', async function(){
     if(Date.now() - _lastSyncDownTime < 3000) return;
     if(!_syncGetStudentId()) return;
     await syncDownStudentState();
+    // 외부 문법 페이지 등에서 만든 데이터를 Firebase로 푸시
+    await syncUpLocalState();
     if(typeof render === 'function'){ try{ render(); }catch(e){} }
 });
 
@@ -1102,6 +1104,11 @@ function render(){
         body=viewProgress(s);
     }
     document.getElementById('app').innerHTML=(isPreview()?renderPreviewBanner(s):'')+renderNav(s)+'<div class="container">'+body+'</div>'+(state.vocabSelectedWord!==null&&state.vocabSelectedWord!==undefined?renderWordModal():'');
+    // 📌 셀프체크/실전평가 화면은 문제를 답할 때마다 위로 자동 스크롤 (스크롤이 아래로 내려간 채 다음 문제 가는 불편 해결)
+    const scrollViews=['test','exam','sentSelf','weeklyExam','weeklyTrain'];
+    if(scrollViews.includes(state.view)){
+        window.scrollTo({top:0, behavior:'instant'});
+    }
     }catch(renderError){
         console.error('[RENDER ERROR]',renderError);
         document.getElementById('app').innerHTML='<div style="padding:40px;color:red;font-size:14px"><h2>렌더링 오류</h2><pre>'+renderError.message+'\n'+renderError.stack+'</pre></div>';
@@ -6553,7 +6560,12 @@ window.addEventListener('DOMContentLoaded',async()=>{
     }
     const u=getUser();if(!u||u.role==='admin'){window.location.href='login.html';return;}
     // 📡 다른 기기에서 학습한 진도가 있으면 받아와서 적용 (학원 태블릿 ↔ 집 폰 동기화)
-    try{await syncDownStudentState();}catch(e){console.warn('진도 동기화 실패:',e);}
+    try{
+        await syncDownStudentState();
+        // 문법 챕터 페이지(외부)는 RL_STORE를 거치지 않고 localStorage에 직접 쓰므로
+        // 로컬에만 있는 학생 진도를 Firebase에 푸시 (다른 기기에서도 볼 수 있게)
+        await syncUpLocalState();
+    }catch(e){console.warn('진도 동기화 실패:',e);}
     render();
 });
 // 플래시카드 키보드 단축키
