@@ -4310,7 +4310,11 @@ brave	용감한
                 </table></div>
             </div>`;
         }).join('')}`:''}
+        <h3 style="margin:24px 0 8px">📋 기출문제 응시 기록</h3>
+        <div id="gichul-admin-records" style="min-height:60px"><div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">불러오는 중...</div></div>
         <div class="flex flex-gap" style="justify-content:flex-end;margin-top:20px"><button onclick="if(confirm('${studentId} 학생의 모든 문법 기록을 초기화하시겠습니까?')){clearGrammarLog('${studentId}');closeModal();}" class="btn-sm btn-danger">🗑 기록 초기화</button><button class="btn-primary" onclick="closeModal()">닫기</button></div>`;
+        // 모달 DOM 삽입 후 비동기로 Firebase에서 기출문제 기록 로드
+        setTimeout(()=>loadGichulAdminRecords(s.name), 0);
         return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-content" style="max-width:900px">${content}</div></div>`;
     }
     else if(modal.type==='previewKeys'){
@@ -4562,6 +4566,99 @@ function clearGrammarLog(studentId){
     const keys=RL_STORE.keys().filter(k=>k&&k.startsWith(prefix));
     keys.forEach(k=>RL_STORE.remove(k));
     alert(`✅ ${keys.length}개 항목이 초기화되었습니다.`);
+}
+
+// ========== 📋 기출문제 응시 기록 (Firebase 연동) ==========
+const GICHUL_FIREBASE_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
+
+async function loadGichulAdminRecords(studentName){
+    const el = document.getElementById('gichul-admin-records');
+    if(!el) return;
+    try{
+        const r = await fetch(GICHUL_FIREBASE_URL + '/quiz_detail.json');
+        const data = await r.json();
+        if(!data){
+            el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">아직 응시 기록이 없습니다.</div>';
+            return;
+        }
+        const records = Object.values(data).filter(r => r && r.studentName === studentName);
+        records.sort((a,b) => (b.ts||0) - (a.ts||0));
+        if(records.length === 0){
+            el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">아직 기출문제 응시 기록이 없습니다.</div>';
+            return;
+        }
+        el.innerHTML = renderGichulAdminRecords(records);
+    }catch(e){
+        el.innerHTML = '<div style="padding:16px;text-align:center;color:#DC2626;font-size:13px">기록 불러오기 실패: '+escapeHtml(e.message||'')+'</div>';
+    }
+}
+
+function gichulEscape(s){
+    if(s===null||s===undefined) return '';
+    return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderGichulAdminRecords(records){
+    return records.map((rec, idx) => {
+        const pctColor = rec.pct >= 80 ? '#16A34A' : rec.pct >= 60 ? '#CA8A04' : '#DC2626';
+        const qs = Array.isArray(rec.questions) ? rec.questions : [];
+        const wrongCount = qs.filter(q => q && q.isCorrect === false).length;
+        const okCount = qs.filter(q => q && q.isCorrect === true).length;
+        let chapterLabel = '';
+        if(rec.chapterTitle) chapterLabel = ' · ' + gichulEscape(rec.chapterTitle);
+        else if(rec.chapter !== null && rec.chapter !== undefined) chapterLabel = ' · Ch.' + rec.chapter;
+        let coverageLabel = '';
+        if(Array.isArray(rec.selectedChs) && rec.selectedChs.length) coverageLabel = ' · 누적 '+rec.selectedChs.length+'개 챕터 [Ch.'+rec.selectedChs.join(', ')+']';
+        else if(Array.isArray(rec.selectedRounds) && rec.selectedRounds.length) coverageLabel = ' · 누적 '+rec.selectedRounds.length+'개 회차';
+        return `<div style="background:#fff;border:1px solid var(--border-light);border-left:4px solid ${pctColor};border-radius:10px;margin-bottom:10px;padding:12px 14px">
+            <div onclick="document.getElementById('gichul-detail-${idx}').style.display=document.getElementById('gichul-detail-${idx}').style.display==='none'?'block':'none'" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;gap:12px">
+                <div style="flex:1;min-width:0">
+                    <div style="font-weight:700;font-size:14px">${gichulEscape(rec.testLabel||'시험')}${chapterLabel}</div>
+                    <div style="font-size:12px;color:var(--text3);margin-top:2px">${gichulEscape(rec.date||'')}${coverageLabel}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0">
+                    <div style="font-size:18px;font-weight:800;color:${pctColor}">${rec.score}<span style="font-size:12px;color:var(--text3)">/${rec.total}</span></div>
+                    <div style="font-size:11px;color:var(--text2)">✓${okCount} · ✗${wrongCount}${rec.grade?' · '+gichulEscape(rec.grade):''}</div>
+                </div>
+                <div style="color:var(--text3);font-size:18px;flex-shrink:0">▾</div>
+            </div>
+            <div id="gichul-detail-${idx}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light)">
+                ${renderGichulWrongList(rec)}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderGichulWrongList(rec){
+    const qs = Array.isArray(rec.questions) ? rec.questions : [];
+    const wrongs = qs.filter(q => q && q.isCorrect === false);
+    if(qs.length === 0) return '<div style="color:var(--text3);font-size:13px;padding:8px 0">상세 문제 데이터가 없습니다.</div>';
+    if(wrongs.length === 0) return '<div style="color:#16A34A;font-weight:600;padding:8px 0;font-size:14px">🎉 전부 정답입니다!</div>';
+    return `<div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text2)">❌ 오답 ${wrongs.length}문항 · 클릭한 답(✗) vs 정답(✓)</div>` +
+        wrongs.map(q => {
+            let body = '';
+            if(q.type === 'sa'){
+                body = `<div style="font-size:12px;background:#fee2e2;color:#991b1b;padding:7px 10px;border-radius:6px;margin-bottom:4px"><strong>✗ 내 답:</strong> ${gichulEscape(q.userAns||'(미응답)')}</div>
+                        <div style="font-size:12px;background:#dcfce7;color:#166534;padding:7px 10px;border-radius:6px"><strong>✓ 정답:</strong> ${gichulEscape(q.a||'')}</div>`;
+            } else if(Array.isArray(q.c)){
+                body = q.c.map((choice, ci) => {
+                    const isAns = ci === q.a;
+                    const isPicked = ci === q.userAns;
+                    const bg = isAns ? '#dcfce7' : (isPicked ? '#fee2e2' : '#f9fafb');
+                    const fg = isAns ? '#166534' : (isPicked ? '#991b1b' : '#6b7280');
+                    const mark = isAns ? '✓' : (isPicked ? '✗' : '·');
+                    const fw = (isAns || isPicked) ? '600' : '400';
+                    return `<div style="padding:6px 10px;background:${bg};color:${fg};border-radius:6px;margin-bottom:3px;font-size:12px;font-weight:${fw}"><strong>${mark}</strong> ${gichulEscape(choice)}</div>`;
+                }).join('');
+            } else {
+                body = '<div style="font-size:12px;color:var(--text3)">선택지 정보 없음</div>';
+            }
+            return `<div style="background:#fafafa;border-radius:8px;padding:10px 12px;margin-bottom:10px">
+                <div style="font-size:13px;font-weight:600;margin-bottom:8px;line-height:1.5">${q.n||'?'}번. ${gichulEscape(q.q||'')}</div>
+                ${body}
+                ${q.e ? `<div style="margin-top:8px;padding:8px 10px;background:#fef3c7;border-radius:6px;font-size:12px;color:#78350f;line-height:1.5"><strong>💡 해설:</strong> ${gichulEscape(q.e)}</div>` : ''}
+            </div>`;
+        }).join('');
 }
 
 // ========== 학생 학습 이력 영역별 리셋 모달 ==========

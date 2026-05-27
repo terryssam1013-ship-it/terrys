@@ -6279,6 +6279,120 @@ function resetGichulIframe(){
     if(fr) fr.src = QUIZ_BASE_URL + '?embedded=1&t=' + Date.now();
 }
 
+// 시험 파일명 → 사람이 읽을 수 있는 라벨로 변환
+function gichulTestFileLabel(file){
+    if(!file) return '시험';
+    const m = {
+        'vocab_1.html':'단어테스트 1회','vocab_2.html':'단어테스트 2회','vocab_3.html':'단어테스트 3회',
+        'vocab_4.html':'단어테스트 4회','vocab_5.html':'단어테스트 5회','vocab_6.html':'단어테스트 6회',
+        'vocab_7.html':'단어테스트 7회','vocab_8.html':'단어테스트 8회','vocab_9.html':'단어테스트 9회',
+        'vocab_10.html':'단어테스트 10회','vocab_cumulative.html':'단어 누적테스트',
+        'chunilmun_test.html':'천일문 GRAMMAR Lv2','chunilmun_cumulative.html':'천일문 누적',
+        'eobeopkkeut_start.html':'어법끝 START','eobeopkkeut_cumulative.html':'어법끝 누적',
+        'munmajung_lv1.html':'문마중 Lv1','munmajung_lv1_cumulative.html':'문마중 Lv1 누적',
+        'munmajung.html':'문마중 Lv2','munmajung_cumulative.html':'문마중 Lv2 누적',
+        'munmajung_lv3.html':'문마중 Lv3','munmajung_lv3_cumulative.html':'문마중 Lv3 누적',
+    };
+    return m[file] || file.replace('.html','');
+}
+
+// iframe 안에서 문제 + 학생답 + 해설을 추출
+function extractGichulQuestions(iframeWin, basePayload){
+    try{
+        const Q = iframeWin.Q;
+        if(!Array.isArray(Q) || Q.length === 0) return null;
+        const mcAns = iframeWin.mcAns;   // 문법형 객관식 답안
+        const saAns = iframeWin.saAns;   // 문법형 주관식 답안
+        const ans   = iframeWin.ans;     // 단어형 답안
+        const MC_COUNT = (typeof iframeWin.MC_COUNT === 'number') ? iframeWin.MC_COUNT : null;
+
+        return Q.map((q, i) => {
+            const out = {
+                n: q.n || (i+1),
+                type: q.type || 'mc',
+                q:  q.q || q.question || q.prompt || '',
+                c:  Array.isArray(q.c) ? q.c.slice() : (Array.isArray(q.choices) ? q.choices.slice() : null),
+                a:  (typeof q.a !== 'undefined') ? q.a : q.answer,
+                pts: q.pts || null,
+                e:  q.e || ''   // 해설
+            };
+            // 학생이 고른 답
+            let userAns = null, isCorrect = false;
+            if(out.type === 'sa'){
+                // 주관식 (문법형) — saAns[i - MC_COUNT]
+                if(saAns && MC_COUNT !== null){
+                    userAns = saAns[i - MC_COUNT];
+                }
+                isCorrect = (typeof userAns === 'string') && (typeof out.a === 'string') &&
+                            userAns.trim().toLowerCase() === out.a.trim().toLowerCase();
+            } else if(out.type === 'mc' || mcAns){
+                // 객관식 (문법형 mc)
+                userAns = mcAns ? mcAns[i] : null;
+                isCorrect = (userAns === out.a) && userAns !== -1 && userAns != null;
+            } else if(ans){
+                // 단어형 (en_ko / ko_en)
+                userAns = ans[i];
+                isCorrect = (userAns === out.a) && userAns !== -1 && userAns != null;
+            }
+            out.userAns = userAns;
+            out.isCorrect = !!isCorrect;
+            return out;
+        });
+    }catch(e){
+        console.warn('문제 추출 실패:', e);
+        return null;
+    }
+}
+
+// 풍부한 상세 payload를 Firebase에 추가 POST
+function captureRichDetailAndPost(iframeWin, basePayload, origFetch){
+    try{
+        const u = getUser();
+        const path = (iframeWin.location && iframeWin.location.pathname) || '';
+        const testFile = path.split('/').pop() || '';
+        const questions = extractGichulQuestions(iframeWin, basePayload);
+        if(!questions) return; // Q가 없으면 패스 (vocab 같은 일부 케이스)
+
+        // 챕터 정보 (있을 때만)
+        let chapterTitle = '';
+        try{
+            if(iframeWin.CHAPTERS && (typeof iframeWin.curCh !== 'undefined')){
+                const ch = iframeWin.CHAPTERS[iframeWin.curCh];
+                if(ch && ch.title) chapterTitle = ch.title;
+            }
+        }catch(e){}
+
+        const rich = {
+            studentId: u && u.id ? u.id : '',
+            studentName: basePayload.name || (u && u.name) || '',
+            testFile: testFile,
+            testLabel: gichulTestFileLabel(testFile),
+            chapter: (typeof basePayload.chapter !== 'undefined') ? basePayload.chapter : (typeof iframeWin.curCh !== 'undefined' ? iframeWin.curCh : null),
+            chapterTitle: chapterTitle,
+            selectedChs: Array.isArray(iframeWin.selectedChs) ? iframeWin.selectedChs.slice() : null,
+            selectedRounds: Array.isArray(iframeWin.selectedRounds) ? iframeWin.selectedRounds.slice() : null,
+            score: basePayload.score,
+            total: basePayload.total,
+            pct: (typeof basePayload.pct !== 'undefined') ? basePayload.pct : (basePayload.total ? Math.round((basePayload.score/basePayload.total)*100) : 0),
+            grade: basePayload.grade || '',
+            mcScore: (typeof basePayload.mcScore !== 'undefined') ? basePayload.mcScore : null,
+            saScore: (typeof basePayload.saScore !== 'undefined') ? basePayload.saScore : null,
+            ts: basePayload.ts || Date.now(),
+            date: basePayload.date || new Date().toLocaleString('ko-KR'),
+            questions: questions
+        };
+
+        // 별도 Firebase 경로로 추가 저장 (기존 점수 저장에 영향 없음)
+        origFetch('https://' + QUIZ_FIREBASE_HOST + '/quiz_detail.json', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(rich)
+        }).catch(e => console.warn('풍부 데이터 저장 실패:', e));
+    }catch(e){
+        console.warn('풍부 데이터 캡처 실패:', e);
+    }
+}
+
 // iframe이 로드될 때마다 호출됨 (메인→테스트페이지 이동할 때도 매번)
 function onGichulIframeLoad(){
     const fr = document.getElementById('gichul-iframe');
@@ -6326,8 +6440,10 @@ function onGichulIframeLoad(){
                        && opts && opts.method === 'POST'
                        && opts.body){
                         const payload = JSON.parse(opts.body);
-                        // 부모 창에 저장
+                        // 부모 창에 저장 (학생 본인용 간단 이력)
                         saveGichulScore(payload);
+                        // 풍부한 상세 데이터를 Firebase에 추가 POST (관리자 화면용)
+                        captureRichDetailAndPost(win, payload, origFetch);
                     }
                 }catch(err){ console.warn('점수 캡처 실패:', err); }
                 return origFetch(url, opts);
@@ -6335,6 +6451,22 @@ function onGichulIframeLoad(){
             win.__terrysHooked = true;
         }
     }catch(e){ console.warn('fetch hook 실패:', e); }
+
+    // 3) startQuiz() 가로채기 — 챕터 선택 등에서 name-in이 비워져도
+    //    시험 시작 시점에 자동으로 학생 이름 재주입 (alert 방지)
+    try{
+        if(typeof win.startQuiz === 'function' && !win.__terrysStartHooked){
+            const origStart = win.startQuiz;
+            win.startQuiz = function(){
+                try{
+                    const n = doc.getElementById('name-in');
+                    if(n && !n.value.trim()) n.value = studentName;
+                }catch(err){}
+                return origStart.apply(this, arguments);
+            };
+            win.__terrysStartHooked = true;
+        }
+    }catch(e){ console.warn('startQuiz hook 실패:', e); }
 }
 </script>
 <script src="pwa-init.js"></script>
