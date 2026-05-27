@@ -1,16 +1,18 @@
 /**
- * grammar-sync.js
- * 문법 챕터 페이지(grammarwise-*.html 등)에서 학생 진도를 Firebase에 실시간 동기화
- * 
+ * grammar-sync.js (v2 — 학생 진도 종합 동기화)
+ * 문법/단어 챕터 페이지(grammarwise-*.html, vocab-learn.html 등)에서
+ * 학생 학습 데이터를 Firebase에 실시간 동기화합니다.
+ *
  * 사용법:
- *   각 챕터 파일의 <head> 안에 아래 한 줄 추가:
+ *   각 챕터/학습 페이지의 <head> 또는 body 첫 script 근처에 한 줄 추가:
  *   <script src="grammar-sync.js"></script>
- * 
- * 동작:
- *   - localStorage.setItem이 호출될 때마다 자동 감지
- *   - 키가 rl_gr_<현재학생id>_* 패턴이면 Firebase에 PATCH로 푸시
- *   - 디바운스 500ms (연속 저장 시 한번에 묶어 푸시)
- *   - 페이지 닫힐 때 keepalive fetch로 마지막 푸시 보장 (폰 잠금 OK)
+ *
+ * 처리하는 키:
+ *   - uid 포함 키 (rl_gr_<sid>_*, rl_inprog_<sid>_*, rl_trtype_<sid>_*, 
+ *     rl_train_<sid>_*, rl_done_<sid>_*, rl_weekly_<sid>_*, rl_gichul_history_<sid>):
+ *     값 그대로 푸시
+ *   - 공유 키 (rl_progress, rl_vc_*): 값이 {sid:데이터} 형식이므로
+ *     현재 학생 부분만 추출해서 __shared__<key>로 푸시
  */
 
 (function(){
@@ -19,10 +21,8 @@
     const SYNC_FB_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
     const DEBOUNCE_MS = 500;
     
-    // 현재 학생 ID 가져오기 (localStorage 또는 IndexedDB)
     function getCurrentSid(){
         try{
-            // localStorage 우선
             let raw = localStorage.getItem('rl_current_user');
             if(!raw && window.RLStorage && window.RLStorage.isReady && window.RLStorage.isReady()){
                 raw = window.RLStorage.getItem('rl_current_user');
@@ -33,11 +33,20 @@
         }catch(e){ return null; }
     }
     
-    function shouldSyncKey(k, sid){
-        if(!k || typeof k !== 'string') return false;
-        if(!k.startsWith('rl_gr_')) return false;
-        if(!k.includes(sid)) return false;  // 안전장치: 다른 학생 데이터 누출 방지
-        return true;
+    function keyType(k){
+        if(!k || typeof k !== 'string' || !k.startsWith('rl_')) return 'skip';
+        if(/^rl_gr_/.test(k)) return 'uid-prefixed';
+        if(/^rl_gichul_history_/.test(k)) return 'uid-prefixed';
+        if(/^rl_inprog_/.test(k)) return 'uid-prefixed';
+        if(/^rl_trtype_/.test(k)) return 'uid-prefixed';
+        if(/^rl_train_/.test(k)) return 'uid-prefixed';
+        if(/^rl_done_/.test(k)) return 'uid-prefixed';
+        if(/^rl_weekly_/.test(k)) return 'uid-prefixed';
+        if(/^rl_assess_/.test(k)) return 'uid-prefixed';
+        if(k === 'rl_progress') return 'uid-indexed';
+        if(/^rl_vc_/.test(k)) return 'uid-indexed';
+        if(k === 'rl_active_week') return 'per-student-global';
+        return 'skip';
     }
     
     function safeKey(k){
@@ -49,7 +58,7 @@
     
     function schedulePush(){
         if(pushTimer) return;
-        pushTimer = setTimeout(flushPush, DEBOUNCE_MS);
+        pushTimer = setTimeout(function(){ flushPush(false); }, DEBOUNCE_MS);
     }
     
     function flushPush(useKeepalive){
@@ -73,50 +82,59 @@
         };
         if(useKeepalive) fetchOpts.keepalive = true;
         
-        fetch(url, fetchOpts).then(r => {
+        fetch(url, fetchOpts).then(function(r){
             if(!r.ok){
-                console.warn('[Grammar Sync] 푸시 실패 status='+r.status);
-                // 실패 시 다음 시도 위해 큐에 복원
+                console.warn('[Student Sync] 푸시 실패 status='+r.status);
                 for(const k in batch){ if(!(k in pushQueue)) pushQueue[k] = batch[k]; }
                 setTimeout(schedulePush, 5000);
             } else {
-                console.log('[Grammar Sync] ✅ '+keys.length+'개 항목 푸시 (sid: '+sid+')');
+                console.log('[Student Sync] ✅ '+keys.length+'개 항목 푸시 (sid: '+sid+')');
             }
-        }).catch(e => {
-            console.warn('[Grammar Sync] 네트워크 오류:', e);
+        }).catch(function(e){
+            console.warn('[Student Sync] 네트워크 오류:', e);
             for(const k in batch){ if(!(k in pushQueue)) pushQueue[k] = batch[k]; }
         });
     }
     
-    // localStorage.setItem 후킹
+    function queueSet(k, v){
+        const sid = getCurrentSid();
+        if(!sid) return;
+        const type = keyType(k);
+        if(type === 'skip') return;
+        
+        if(type === 'uid-prefixed'){
+            if(!k.includes(sid)) return;
+            pushQueue[safeKey(k)] = v;
+        } else if(type === 'uid-indexed'){
+            try{
+                const parsed = (v === null || v === undefined) ? null : JSON.parse(v);
+                const myPortion = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed[sid] : null;
+                pushQueue['__shared__' + safeKey(k)] = 
+                    myPortion === undefined || myPortion === null ? null : JSON.stringify(myPortion);
+            }catch(e){ /* 잘못된 JSON 무시 */ }
+        } else if(type === 'per-student-global'){
+            pushQueue['__perstudent__' + safeKey(k)] = v;
+        }
+        schedulePush();
+    }
+    
     const origSetItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = function(k, v){
         origSetItem(k, v);
-        const sid = getCurrentSid();
-        if(sid && shouldSyncKey(k, sid)){
-            pushQueue[safeKey(k)] = v;
-            schedulePush();
-        }
+        queueSet(k, v);
     };
     
-    // localStorage.removeItem 후킹
     const origRemoveItem = localStorage.removeItem.bind(localStorage);
     localStorage.removeItem = function(k){
         origRemoveItem(k);
-        const sid = getCurrentSid();
-        if(sid && shouldSyncKey(k, sid)){
-            pushQueue[safeKey(k)] = null;
-            schedulePush();
-        }
+        queueSet(k, null);
     };
     
-    // 페이지 닫기/숨김 직전에 큐에 남은 데이터 강제 전송 (keepalive로 보장)
-    // → 폰 잠금, 다른 앱 전환, 탭 닫기 모두 커버
     window.addEventListener('beforeunload', function(){ flushPush(true); });
     window.addEventListener('pagehide', function(){ flushPush(true); });
     document.addEventListener('visibilitychange', function(){
         if(document.visibilityState === 'hidden') flushPush(true);
     });
     
-    console.log('[Grammar Sync] 활성화 (학생: '+(getCurrentSid()||'미로그인')+')');
+    console.log('[Student Sync] 활성화 (학생: '+(getCurrentSid()||'미로그인')+')');
 })();
