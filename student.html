@@ -6174,39 +6174,81 @@ function getGichulHistory(){
     }catch(e){ return []; }
 }
 
-// 점수 저장 (quiz 사이트 fetch에서 가로챈 payload)
-function saveGichulScore(payload){
-    if(!payload || typeof payload.score === 'undefined') return;
-    const history = getGichulHistory();
-    // 동일 payload 중복 저장 방지 (ts 기준)
-    if(payload.ts && history.some(h => h.ts === payload.ts)) return;
-    history.push({
-        name: payload.name || '',
-        score: payload.score,
-        total: payload.total || 0,
-        pct: payload.pct || 0,
-        grade: payload.grade || '',
-        date: payload.date || new Date().toLocaleString('ko-KR'),
-        ts: payload.ts || Date.now(),
-        testId: payload.testId || 'unknown'
-    });
-    // 최신순으로 정렬해서 저장
-    history.sort((a,b) => (b.ts||0) - (a.ts||0));
+// HTML 이스케이프 헬퍼
+function gichulEscape(s){
+    if(s===null||s===undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; });
+}
+
+// 메시지 → 풍부 데이터 객체 빌드 (학생 로컬 저장 + Firebase 저장 양쪽에 사용)
+function buildGichulRich(msg){
+    try{
+        var u = getUser();
+        var basePayload = msg.payload || {};
+        if(typeof basePayload.score === 'undefined') return null;
+        var questions = extractGichulQuestionsFromMessage(msg); // null OK
+        var testFile = msg.testFile || '';
+        var tid = basePayload.testId || (testFile ? testFile.replace(/\.html$/i, '') : '');
+        return {
+            studentId: (u && u.id) ? u.id : (msg.studentId || ''),
+            studentName: basePayload.name || msg.studentName || (u && u.name) || '',
+            testFile: testFile,
+            testLabel: gichulTestFileLabel(testFile),
+            testId: tid || 'unknown',
+            chapter: (typeof basePayload.chapter !== 'undefined') ? basePayload.chapter : (typeof msg.curCh !== 'undefined' && msg.curCh !== null ? msg.curCh : null),
+            chapterTitle: msg.chapterTitle || '',
+            selectedChs: Array.isArray(msg.selectedChs) ? msg.selectedChs : null,
+            selectedRounds: Array.isArray(msg.selectedRounds) ? msg.selectedRounds : null,
+            score: basePayload.score,
+            total: basePayload.total || 0,
+            pct: (typeof basePayload.pct !== 'undefined') ? basePayload.pct : (basePayload.total ? Math.round((basePayload.score/basePayload.total)*100) : 0),
+            grade: basePayload.grade || '',
+            mcScore: (typeof basePayload.mcScore !== 'undefined') ? basePayload.mcScore : null,
+            saScore: (typeof basePayload.saScore !== 'undefined') ? basePayload.saScore : null,
+            ts: basePayload.ts || Date.now(),
+            date: basePayload.date || new Date().toLocaleString('ko-KR'),
+            questions: questions
+        };
+    }catch(e){
+        console.warn('풍부 데이터 빌드 실패:', e);
+        return null;
+    }
+}
+
+// 학생 본인의 IndexedDB에 저장 (이력 화면에서 펼침 가능)
+function saveGichulRich(rich){
+    if(!rich) return;
+    var history = getGichulHistory();
+    // 동일 ts 중복 방지
+    if(rich.ts && history.some(function(h){ return h.ts === rich.ts; })) return;
+    history.push(rich);
+    history.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
     try{
         RL_STORE.set(gichulHistoryKey(), JSON.stringify(history));
-    }catch(e){ console.error('기출문제 점수 저장 실패:', e); }
-    // 화면 갱신 (현재 기출문제 탭에 있을 때만)
+    }catch(e){ console.error('기출문제 저장 실패:', e); }
+    // 현재 기출문제 탭 화면에 있으면 이력 부분만 갱신
     if(state.menu === 'reading' && state.schedTab === 'gichul'){
-        // iframe은 다시 그리지 않고 이력 부분만 갱신
-        const histBox = document.getElementById('gichul-history-list');
+        var histBox = document.getElementById('gichul-history-list');
         if(histBox) histBox.innerHTML = renderGichulHistoryList();
     }
 }
 
-// 시험ID를 보기 좋은 이름으로 변환
+// Firebase에 풍부 데이터 추가 저장 (관리자 화면용)
+function postRichToFirebase(rich){
+    if(!rich) return;
+    fetch('https://' + QUIZ_FIREBASE_HOST + '/quiz_detail.json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rich)
+    }).catch(function(e){ console.warn('Firebase 저장 실패:', e); });
+}
+
+// 시험ID를 보기 좋은 이름으로 변환 (확장자 있어도/없어도 처리)
 function gichulTestLabel(testId){
     if(!testId) return '시험';
-    const map = {
+    // .html 확장자 정규화
+    var key = testId.replace(/\.html$/i, '');
+    var map = {
         'vocab_1':'단어테스트 1회','vocab_2':'단어테스트 2회','vocab_3':'단어테스트 3회',
         'vocab_4':'단어테스트 4회','vocab_5':'단어테스트 5회','vocab_6':'단어테스트 6회',
         'vocab_7':'단어테스트 7회','vocab_8':'단어테스트 8회','vocab_9':'단어테스트 9회',
@@ -6217,7 +6259,7 @@ function gichulTestLabel(testId){
         'munmajung':'문마중 Lv2','munmajung_cumulative':'문마중 Lv2 누적',
         'munmajung_lv3':'문마중 Lv3','munmajung_lv3_cumulative':'문마중 Lv3 누적',
     };
-    return map[testId] || testId;
+    return map[key] || key;
 }
 
 // 카테고리 색상 (단어=초록, 문법=파랑, 리딩=주황)
@@ -6229,25 +6271,92 @@ function gichulCategoryColor(testId){
     return '#6b7280';
 }
 
-// 이력 리스트 렌더링 (날짜순 한 줄씩)
+// 이력 리스트 렌더링 (날짜순 한 줄씩, 클릭하면 오답+해설 펼침)
 function renderGichulHistoryList(){
-    const history = getGichulHistory();
+    var history = getGichulHistory();
     if(!history.length){
-        return `<div style="padding:30px 16px;text-align:center;color:var(--text3);font-size:13px;background:var(--bg);border-radius:10px">
-            아직 응시 기록이 없어요. 위 시험을 풀면 여기에 기록됩니다.
-        </div>`;
+        return '<div style="padding:30px 16px;text-align:center;color:var(--text3);font-size:13px;background:var(--bg);border-radius:10px">아직 응시 기록이 없어요. 위 시험을 풀면 여기에 기록됩니다.</div>';
     }
-    return history.map(h => {
-        const c = gichulCategoryColor(h.testId);
-        const pctColor = h.pct >= 80 ? '#1a7350' : h.pct >= 60 ? '#d97706' : '#dc2626';
-        return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;border:1px solid var(--border-light);border-radius:10px;margin-bottom:8px;font-size:13px">
-            <div style="width:8px;height:8px;border-radius:50%;background:${c};flex-shrink:0"></div>
-            <div style="font-size:12px;color:var(--text2);flex-shrink:0;min-width:130px">${h.date}</div>
-            <div style="flex:1;font-weight:600;color:var(--text)">${gichulTestLabel(h.testId)}</div>
-            <div style="font-weight:700;color:${pctColor}">${h.score}/${h.total}</div>
-            <div style="font-size:12px;color:var(--text2);min-width:50px;text-align:right">${h.pct}점${h.grade?' · '+h.grade:''}</div>
-        </div>`;
+    return history.map(function(h, idx){
+        var color = gichulCategoryColor(h.testId || h.testFile);
+        var pctColor = h.pct >= 80 ? '#1a7350' : h.pct >= 60 ? '#d97706' : '#dc2626';
+        var qs = Array.isArray(h.questions) ? h.questions : [];
+        var rightCount, wrongCount;
+        if(qs.length > 0){
+            rightCount = qs.filter(function(q){ return q && q.isCorrect === true; }).length;
+            wrongCount = qs.filter(function(q){ return q && q.isCorrect === false; }).length;
+        } else {
+            // Q 없는 옛날 데이터: 단어형 기준 (score = 맞은 수)
+            rightCount = h.score || 0;
+            wrongCount = (h.total || 0) - rightCount;
+            if(wrongCount < 0) wrongCount = 0;
+        }
+        var hasDetail = qs.length > 0;
+        
+        // 챕터 라벨
+        var chapterLabel = '';
+        if(h.chapterTitle) chapterLabel = ' · ' + gichulEscape(h.chapterTitle);
+        else if(h.chapter !== null && h.chapter !== undefined && h.chapter !== '') chapterLabel = ' · Ch.' + h.chapter;
+        
+        // 누적 정보
+        var coverageLabel = '';
+        if(Array.isArray(h.selectedChs) && h.selectedChs.length) coverageLabel = ' · 누적 ' + h.selectedChs.length + '개 챕터';
+        else if(Array.isArray(h.selectedRounds) && h.selectedRounds.length) coverageLabel = ' · 누적 ' + h.selectedRounds.length + '개 회차';
+        
+        var label = gichulTestLabel(h.testId || h.testFile);
+        var caret = hasDetail ? '<div style="color:var(--text3);font-size:14px;flex-shrink:0">▾</div>' : '';
+        var onclickAttr = hasDetail
+            ? 'onclick="var d=document.getElementById(\'gichul-st-' + idx + '\');d.style.display=d.style.display===\'none\'?\'block\':\'none\'"'
+            : '';
+        var cursorStyle = hasDetail ? 'cursor:pointer' : '';
+        
+        return '<div style="background:#fff;border:1px solid var(--border-light);border-left:4px solid ' + color + ';border-radius:10px;margin-bottom:8px;padding:12px 14px">'
+            + '<div ' + onclickAttr + ' style="display:flex;align-items:center;gap:12px;' + cursorStyle + '">'
+            + '<div style="font-size:12px;color:var(--text2);flex-shrink:0;min-width:130px">' + gichulEscape(h.date||'') + '</div>'
+            + '<div style="flex:1;min-width:0">'
+            +   '<div style="font-weight:600;color:var(--text);font-size:13px">' + gichulEscape(label) + chapterLabel + '</div>'
+            +   '<div style="font-size:11px;color:var(--text3);margin-top:2px">✓' + rightCount + ' · ✗' + wrongCount + coverageLabel + '</div>'
+            + '</div>'
+            + '<div style="text-align:right;flex-shrink:0">'
+            +   '<div style="font-weight:700;color:' + pctColor + '">' + h.score + '/' + h.total + '</div>'
+            +   '<div style="font-size:11px;color:var(--text2)">' + h.pct + '점' + (h.grade ? ' · ' + gichulEscape(h.grade) : '') + '</div>'
+            + '</div>'
+            + caret
+            + '</div>'
+            + (hasDetail ? '<div id="gichul-st-' + idx + '" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light)">' + renderGichulStudentDetail(h) + '</div>' : '')
+            + '</div>';
     }).join('');
+}
+
+// 학생 화면 — 응시 기록 한 항목 펼쳤을 때 오답 + 해설 표시
+function renderGichulStudentDetail(rec){
+    var qs = Array.isArray(rec.questions) ? rec.questions : [];
+    if(qs.length === 0) return '<div style="color:var(--text3);font-size:12px;padding:8px 0">상세 데이터가 없습니다.</div>';
+    var wrongs = qs.filter(function(q){ return q && q.isCorrect === false; });
+    if(wrongs.length === 0) return '<div style="color:#16A34A;font-weight:600;padding:8px 0;font-size:13px">🎉 전부 정답입니다!</div>';
+    return '<div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text2)">❌ 오답 ' + wrongs.length + '문항</div>'
+        + wrongs.map(function(q){
+            var body = '';
+            if(q.type === 'sa'){
+                body = '<div style="font-size:12px;background:#fee2e2;color:#991b1b;padding:7px 10px;border-radius:6px;margin-bottom:4px"><strong>✗ 내 답:</strong> ' + gichulEscape(q.userAns||'(미응답)') + '</div>'
+                     + '<div style="font-size:12px;background:#dcfce7;color:#166534;padding:7px 10px;border-radius:6px"><strong>✓ 정답:</strong> ' + gichulEscape(q.a||'') + '</div>';
+            } else if(Array.isArray(q.c)){
+                body = q.c.map(function(choice, ci){
+                    var isAns = ci === q.a;
+                    var isPicked = ci === q.userAns;
+                    var bg = isAns ? '#dcfce7' : (isPicked ? '#fee2e2' : '#f9fafb');
+                    var fg = isAns ? '#166534' : (isPicked ? '#991b1b' : '#6b7280');
+                    var mark = isAns ? '✓' : (isPicked ? '✗' : '·');
+                    var fw = (isAns || isPicked) ? '600' : '400';
+                    return '<div style="padding:6px 10px;background:' + bg + ';color:' + fg + ';border-radius:6px;margin-bottom:3px;font-size:12px;font-weight:' + fw + '"><strong>' + mark + '</strong> ' + gichulEscape(choice) + '</div>';
+                }).join('');
+            }
+            return '<div style="background:#fafafa;border-radius:8px;padding:10px 12px;margin-bottom:8px">'
+                + '<div style="font-size:13px;font-weight:600;margin-bottom:6px;line-height:1.5">' + (q.n||'?') + '번. ' + gichulEscape(q.q||'') + '</div>'
+                + body
+                + (q.e ? '<div style="margin-top:6px;padding:8px 10px;background:#fef3c7;border-radius:6px;font-size:12px;color:#78350f;line-height:1.5"><strong>💡 해설:</strong> ' + gichulEscape(q.e) + '</div>' : '')
+                + '</div>';
+        }).join('');
 }
 
 // 기출문제 탭 메인 렌더링
@@ -6261,7 +6370,7 @@ function renderGichul(s){
         </div>
         <div style="border:1px solid var(--border-light);border-radius:12px;overflow:hidden;background:#fff;box-shadow:var(--shadow-sm)">
             <iframe id="gichul-iframe"
-                src="${QUIZ_BASE_URL}?embedded=1"
+                src="${QUIZ_BASE_URL}?student=${encodeURIComponent(s.name||'')}&sid=${encodeURIComponent((getUser()&&getUser().id)||'')}"
                 style="width:100%;height:720px;border:0;display:block;background:#f0f4f1"
                 onload="onGichulIframeLoad()"
                 title="기출문제"></iframe>
@@ -6276,7 +6385,11 @@ function renderGichul(s){
 // iframe을 처음 화면으로 리셋
 function resetGichulIframe(){
     const fr = document.getElementById('gichul-iframe');
-    if(fr) fr.src = QUIZ_BASE_URL + '?embedded=1&t=' + Date.now();
+    if(!fr) return;
+    const u = getUser();
+    const name = encodeURIComponent((u&&u.name)||'');
+    const sid = encodeURIComponent((u&&u.id)||'');
+    fr.src = QUIZ_BASE_URL + '?student=' + name + '&sid=' + sid + '&t=' + Date.now();
 }
 
 // 시험 파일명 → 사람이 읽을 수 있는 라벨로 변환
@@ -6296,43 +6409,61 @@ function gichulTestFileLabel(file){
     return m[file] || file.replace('.html','');
 }
 
-// iframe 안에서 문제 + 학생답 + 해설을 추출
-function extractGichulQuestions(iframeWin, basePayload){
-    try{
-        const Q = iframeWin.Q;
-        if(!Array.isArray(Q) || Q.length === 0) return null;
-        const mcAns = iframeWin.mcAns;   // 문법형 객관식 답안
-        const saAns = iframeWin.saAns;   // 문법형 주관식 답안
-        const ans   = iframeWin.ans;     // 단어형 답안
-        const MC_COUNT = (typeof iframeWin.MC_COUNT === 'number') ? iframeWin.MC_COUNT : null;
+// iframe 로드 시 호출 (이제는 거의 비어있음 — 모든 작업은 bridge가 처리)
+// onload 이벤트 자체는 유지 (혹시 향후 필요할 수 있어서)
+function onGichulIframeLoad(){
+    // bridge 스크립트가 iframe 내부에서 알아서 처리하므로 별도 작업 없음.
+    // 부모창은 postMessage로 결과만 수신함 (아래 전역 리스너 참조).
+}
 
-        return Q.map((q, i) => {
-            const out = {
+// 메시지 기반 결과 수신 — bridge가 시험 제출 시 보내는 데이터 처리
+if(!window.__terrysQuizMsgInstalled){
+    window.addEventListener('message', function(e){
+        var data = e.data;
+        if(!data || data.type !== 'TERRYS_QUIZ_RESULT') return;
+        try{
+            // 한번 빌드해서 두 곳에 저장
+            var rich = buildGichulRich(data);
+            if(!rich) return;
+            saveGichulRich(rich);       // 학생 본인 IndexedDB
+            postRichToFirebase(rich);   // 관리자 화면용 Firebase
+        }catch(err){ console.warn('quiz 결과 처리 실패:', err); }
+    });
+    window.__terrysQuizMsgInstalled = true;
+}
+
+// (구) captureRichDetailFromMessage 는 buildGichulRich + postRichToFirebase 로 분리되어 제거됨
+
+// 메시지에서 받은 Q+답안 데이터로 문제별 정답/오답 매칭
+function extractGichulQuestionsFromMessage(msg){
+    try{
+        var Q = msg.Q;
+        if(!Array.isArray(Q) || Q.length === 0) return null;
+        var mcAns = msg.mcAns, saAns = msg.saAns, ans = msg.ans;
+        var MC_COUNT = msg.MC_COUNT;
+        return Q.map(function(q, i){
+            var out = {
                 n: q.n || (i+1),
                 type: q.type || 'mc',
                 q:  q.q || q.question || q.prompt || '',
                 c:  Array.isArray(q.c) ? q.c.slice() : (Array.isArray(q.choices) ? q.choices.slice() : null),
                 a:  (typeof q.a !== 'undefined') ? q.a : q.answer,
                 pts: q.pts || null,
-                e:  q.e || ''   // 해설
+                e:  q.e || ''
             };
-            // 학생이 고른 답
-            let userAns = null, isCorrect = false;
+            var userAns = null, isCorrect = false;
             if(out.type === 'sa'){
-                // 주관식 (문법형) — saAns[i - MC_COUNT]
-                if(saAns && MC_COUNT !== null){
+                if(saAns && MC_COUNT !== null && MC_COUNT !== undefined){
                     userAns = saAns[i - MC_COUNT];
                 }
                 isCorrect = (typeof userAns === 'string') && (typeof out.a === 'string') &&
                             userAns.trim().toLowerCase() === out.a.trim().toLowerCase();
-            } else if(out.type === 'mc' || mcAns){
-                // 객관식 (문법형 mc)
-                userAns = mcAns ? mcAns[i] : null;
-                isCorrect = (userAns === out.a) && userAns !== -1 && userAns != null;
+            } else if(mcAns){
+                userAns = mcAns[i];
+                isCorrect = (userAns === out.a) && userAns !== -1 && userAns !== null && userAns !== undefined;
             } else if(ans){
-                // 단어형 (en_ko / ko_en)
                 userAns = ans[i];
-                isCorrect = (userAns === out.a) && userAns !== -1 && userAns != null;
+                isCorrect = (userAns === out.a) && userAns !== -1 && userAns !== null && userAns !== undefined;
             }
             out.userAns = userAns;
             out.isCorrect = !!isCorrect;
@@ -6342,131 +6473,6 @@ function extractGichulQuestions(iframeWin, basePayload){
         console.warn('문제 추출 실패:', e);
         return null;
     }
-}
-
-// 풍부한 상세 payload를 Firebase에 추가 POST
-function captureRichDetailAndPost(iframeWin, basePayload, origFetch){
-    try{
-        const u = getUser();
-        const path = (iframeWin.location && iframeWin.location.pathname) || '';
-        const testFile = path.split('/').pop() || '';
-        const questions = extractGichulQuestions(iframeWin, basePayload);
-        if(!questions) return; // Q가 없으면 패스 (vocab 같은 일부 케이스)
-
-        // 챕터 정보 (있을 때만)
-        let chapterTitle = '';
-        try{
-            if(iframeWin.CHAPTERS && (typeof iframeWin.curCh !== 'undefined')){
-                const ch = iframeWin.CHAPTERS[iframeWin.curCh];
-                if(ch && ch.title) chapterTitle = ch.title;
-            }
-        }catch(e){}
-
-        const rich = {
-            studentId: u && u.id ? u.id : '',
-            studentName: basePayload.name || (u && u.name) || '',
-            testFile: testFile,
-            testLabel: gichulTestFileLabel(testFile),
-            chapter: (typeof basePayload.chapter !== 'undefined') ? basePayload.chapter : (typeof iframeWin.curCh !== 'undefined' ? iframeWin.curCh : null),
-            chapterTitle: chapterTitle,
-            selectedChs: Array.isArray(iframeWin.selectedChs) ? iframeWin.selectedChs.slice() : null,
-            selectedRounds: Array.isArray(iframeWin.selectedRounds) ? iframeWin.selectedRounds.slice() : null,
-            score: basePayload.score,
-            total: basePayload.total,
-            pct: (typeof basePayload.pct !== 'undefined') ? basePayload.pct : (basePayload.total ? Math.round((basePayload.score/basePayload.total)*100) : 0),
-            grade: basePayload.grade || '',
-            mcScore: (typeof basePayload.mcScore !== 'undefined') ? basePayload.mcScore : null,
-            saScore: (typeof basePayload.saScore !== 'undefined') ? basePayload.saScore : null,
-            ts: basePayload.ts || Date.now(),
-            date: basePayload.date || new Date().toLocaleString('ko-KR'),
-            questions: questions
-        };
-
-        // 별도 Firebase 경로로 추가 저장 (기존 점수 저장에 영향 없음)
-        origFetch('https://' + QUIZ_FIREBASE_HOST + '/quiz_detail.json', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(rich)
-        }).catch(e => console.warn('풍부 데이터 저장 실패:', e));
-    }catch(e){
-        console.warn('풍부 데이터 캡처 실패:', e);
-    }
-}
-
-// iframe이 로드될 때마다 호출됨 (메인→테스트페이지 이동할 때도 매번)
-function onGichulIframeLoad(){
-    const fr = document.getElementById('gichul-iframe');
-    if(!fr) return;
-    let doc, win;
-    try{
-        doc = fr.contentDocument;
-        win = fr.contentWindow;
-    }catch(e){
-        console.warn('iframe 접근 실패 (origin 불일치?):', e);
-        return;
-    }
-    if(!doc || !win) return;
-
-    const u = getUser();
-    const studentName = u?.name || '';
-
-    // 1) 이름 입력칸 자동 채우기 + 숨기기
-    try{
-        const nameIn = doc.getElementById('name-in');
-        if(nameIn){
-            nameIn.value = studentName;
-            // 이름 라벨/입력 줄을 숨김 (학생이 본인이라 매번 안 보여도 됨)
-            const lbl = nameIn.previousElementSibling; // <label>이름</label>
-            if(lbl && lbl.tagName === 'LABEL') lbl.style.display = 'none';
-            nameIn.style.display = 'none';
-        }
-        // 관리자 로그인 버튼 숨기기 (학생이 보면 안 됨)
-        doc.querySelectorAll('button').forEach(btn => {
-            if(btn.textContent && btn.textContent.includes('관리자 로그인')){
-                btn.style.display = 'none';
-            }
-        });
-    }catch(e){ console.warn('iframe DOM 수정 실패:', e); }
-
-    // 2) iframe 안의 fetch()를 가로채서 Firebase로 가는 점수 payload 캡처
-    //    (이미 hook 됐으면 중복 적용 X)
-    try{
-        if(!win.__terrysHooked){
-            const origFetch = win.fetch.bind(win);
-            win.fetch = function(url, opts){
-                try{
-                    if(typeof url === 'string'
-                       && url.indexOf(QUIZ_FIREBASE_HOST) !== -1
-                       && opts && opts.method === 'POST'
-                       && opts.body){
-                        const payload = JSON.parse(opts.body);
-                        // 부모 창에 저장 (학생 본인용 간단 이력)
-                        saveGichulScore(payload);
-                        // 풍부한 상세 데이터를 Firebase에 추가 POST (관리자 화면용)
-                        captureRichDetailAndPost(win, payload, origFetch);
-                    }
-                }catch(err){ console.warn('점수 캡처 실패:', err); }
-                return origFetch(url, opts);
-            };
-            win.__terrysHooked = true;
-        }
-    }catch(e){ console.warn('fetch hook 실패:', e); }
-
-    // 3) startQuiz() 가로채기 — 챕터 선택 등에서 name-in이 비워져도
-    //    시험 시작 시점에 자동으로 학생 이름 재주입 (alert 방지)
-    try{
-        if(typeof win.startQuiz === 'function' && !win.__terrysStartHooked){
-            const origStart = win.startQuiz;
-            win.startQuiz = function(){
-                try{
-                    const n = doc.getElementById('name-in');
-                    if(n && !n.value.trim()) n.value = studentName;
-                }catch(err){}
-                return origStart.apply(this, arguments);
-            };
-            win.__terrysStartHooked = true;
-        }
-    }catch(e){ console.warn('startQuiz hook 실패:', e); }
 }
 </script>
 <script src="pwa-init.js"></script>
