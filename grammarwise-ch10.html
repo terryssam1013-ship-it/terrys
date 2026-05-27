@@ -897,6 +897,7 @@ body{
 }
 </style>
   <script src="namog-weekly-pool.js"></script>
+  <script src="grammar-sync.js"></script>
 </head>
 <body>
 
@@ -2559,7 +2560,9 @@ function showFeedback(card, prior){
 function renderTest(stageN){
   const data = stageN===4 ? STAGE4 : STAGE5;
   const s = state['s'+stageN];
-  if(s.done)return renderResults(stageN);
+  // 결과 화면으로 갈지 vs 풀이 화면(또는 리뷰 모드)로 갈지
+  if(s.done && !s.reviewMode) return renderResults(stageN);
+  const isReview = !!s.reviewMode;
 
   const i = Math.min(s.idx, data.length-1);
   const card = data[i];
@@ -2593,21 +2596,48 @@ function renderTest(stageN){
 
   cardArea.innerHTML = `
     <div class="card">
-      <div class="test-banner">
-        <b>📝 ${stageName} 시험 모드</b> · 정답/해설은 모든 문제 제출 후에 보입니다 · 점 클릭으로 문제 이동 가능
-      </div>
-      <div class="test-counter">${i+1} / ${data.length} · 답한 문제 ${answered}개</div>
+      ${isReview?`
+        <div class="test-banner" style="background:#FEF3C7;border-color:#F59E0B;color:#92400E">
+          <b>📋 내 풀이 보기</b> · 채점된 결과 확인 · ${stageN===4?'셀프체크':'실전평가'} ${data.length}문제
+          <button class="btn-pill primary" style="margin-left:8px;padding:5px 12px;font-size:12px" onclick="state.s${stageN}.reviewMode=false;save();render()">← 결과로 돌아가기</button>
+        </div>
+      `:`
+        <div class="test-banner">
+          <b>📝 ${stageName} 시험 모드</b> · 정답/해설은 모든 문제 제출 후에 보입니다 · 점 클릭으로 문제 이동 가능
+        </div>
+      `}
+      <div class="test-counter">${i+1} / ${data.length} · 답한 문제 ${answered}개${isReview?(s.ans[i]?(s.ans[i].ok?' · <span style="color:#10B981;font-weight:700">✓ 맞음</span>':' · <span style="color:#EF4444;font-weight:700">✗ 틀림</span>'):' · <span style="color:#A1A1AA">미답</span>'):''}</div>
       <div class="test-dots" id="dots">${dotsHTML}</div>
       <div class="card-label info">${stageName} · Q${i+1}</div>
       <div class="q-text">${card.q}</div>
       ${card.sentence?`<div class="q-sentence">${card.sentence}${card.trans?`<div class="q-trans">${card.trans}</div>`:''}</div>`:''}
       ${optsHTML}
+      ${isReview&&!card.subjective?`<div style="margin-top:12px;padding:12px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:12px;font-size:14px"><b style="color:#10B981">정답:</b> ${LETTERS[card.ans]} ${card.opts[card.ans]}</div>${card.explain?`<div style="margin-top:8px;padding:12px;background:#FAFAFA;border:1px solid #E5E7EB;border-radius:12px;font-size:13px;line-height:1.6"><b>💡 해설:</b> ${card.explain}</div>`:''}`:''}
+      ${isReview&&card.subjective?`<div style="margin-top:12px;padding:12px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:12px;font-size:14px"><b style="color:#10B981">정답:</b> ${card.answers[0]}</div>${card.explain?`<div style="margin-top:8px;padding:12px;background:#FAFAFA;border:1px solid #E5E7EB;border-radius:12px;font-size:13px;line-height:1.6"><b>💡 해설:</b> ${card.explain}</div>`:''}`:''}
     </div>
-    ${navHTML({prevDisabled:i===0, nextLabel: isLast?'제출하고 결과 보기 ✓':'다음 →'})}
+    ${navHTML({prevDisabled:!isReview&&i===0, nextLabel: isReview?(isLast?'결과로 돌아가기 →':'다음 →'):(isLast?'제출하고 결과 보기 ✓':'다음 →')})}
   `;
 
-  document.getElementById('prevBtn').onclick = ()=>{if(i>0){s.idx=i-1;save();render()}};
+  document.getElementById('prevBtn').onclick = ()=>{
+    if(i>0){
+      s.idx=i-1;save();render();
+    } else if(isReview){
+      // 리뷰 모드: 첫 문제에서 이전 → 결과 화면으로
+      s.reviewMode = false;
+      save();render();
+    }
+  };
   document.getElementById('nextBtn').onclick = ()=>{
+    if(isReview){
+      // 리뷰 모드: 답 변경 없이 다음/결과로
+      if(isLast){
+        s.reviewMode = false;
+        save();render();
+      } else {
+        s.idx=i+1;save();render();
+      }
+      return;
+    }
     if(isLast){
       // Capture subjective if pending
       if(card.subjective){
@@ -2642,35 +2672,58 @@ function renderTest(stageN){
     }
   };
 
-  // Bind options
+  // Bind options (리뷰 모드면 모두 비활성화)
   if(card.subjective){
     const inp = document.getElementById('subjInput');
-    inp.oninput = ()=>{
-      const v = inp.value.trim();
-      if(v){
-        const ok = card.answers.some(a=>normalize(a)===normalize(v));
-        s.ans[i] = {value:v,ok};
-      } else {
-        s.ans[i] = undefined;
-      }
-      save();
-      const dot = document.querySelector(`.test-dot[data-i="${i}"]`);
-      if(dot){dot.classList.remove('answered');if(v)dot.classList.add('answered')}
-    };
-  } else {
-    document.querySelectorAll('.opt-box').forEach(b=>{
-      b.onclick = ()=>{
-        const j = parseInt(b.dataset.i);
-        const ok = j===card.ans;
-        s.ans[i] = {value:j,ok};
-        document.querySelectorAll('.opt-box').forEach((bb,k)=>{
-          bb.classList.remove('selected');
-          if(k===j)bb.classList.add('selected');
-        });
+    if(isReview){
+      inp.disabled = true;
+      inp.style.background = '#F5F5F5';
+    } else {
+      inp.oninput = ()=>{
+        const v = inp.value.trim();
+        if(v){
+          const ok = card.answers.some(a=>normalize(a)===normalize(v));
+          s.ans[i] = {value:v,ok};
+        } else {
+          s.ans[i] = undefined;
+        }
         save();
         const dot = document.querySelector(`.test-dot[data-i="${i}"]`);
-        if(dot)dot.classList.add('answered');
+        if(dot){dot.classList.remove('answered');if(v)dot.classList.add('answered')}
       };
+    }
+  } else {
+    document.querySelectorAll('.opt-box').forEach(b=>{
+      if(isReview){
+        b.style.cursor = 'default';
+        b.style.opacity = '0.75';
+        // 정답 표시
+        const j = parseInt(b.dataset.i);
+        if(j === card.ans){
+          b.style.background = '#D1FAE5';
+          b.style.borderColor = '#10B981';
+          b.style.opacity = '1';
+        }
+        // 내가 찍은 답이 틀린 경우 빨강
+        if(s.ans[i] && s.ans[i].value === j && !s.ans[i].ok){
+          b.style.background = '#FEE2E2';
+          b.style.borderColor = '#EF4444';
+          b.style.opacity = '1';
+        }
+      } else {
+        b.onclick = ()=>{
+          const j = parseInt(b.dataset.i);
+          const ok = j===card.ans;
+          s.ans[i] = {value:j,ok};
+          document.querySelectorAll('.opt-box').forEach((bb,k)=>{
+            bb.classList.remove('selected');
+            if(k===j)bb.classList.add('selected');
+          });
+          save();
+          const dot = document.querySelector(`.test-dot[data-i="${i}"]`);
+          if(dot)dot.classList.add('answered');
+        };
+      }
     });
   }
 
@@ -2783,6 +2836,7 @@ function renderResults(stageN){
           <div class="rstat"><div class="rstat-val" style="color:var(--ink-faint)">${unanswered}</div><div class="rstat-label">미답</div></div>
         </div>
         <div class="result-actions">
+          <button class="btn-pill ghost" id="reviewBtn">📋 내 풀이 보기</button>
           <button class="btn-pill ghost" id="retry">↻ 다시 풀기</button>
           ${nextBtnHTML}
         </div>
@@ -2812,7 +2866,15 @@ function renderResults(stageN){
   `;
 
   document.getElementById('retry').onclick = ()=>{
+    if(!confirm('현재 풀이가 모두 지워지고 처음부터 다시 풀게 됩니다.\n계속하시겠습니까?')) return;
     state['s'+stageN] = {idx:0,ans:[],done:false};
+    save();render();
+  };
+  // 📋 내 풀이 보기: 결과 → 풀이 화면 (리뷰 모드 = 답 변경 불가, 자기 답 확인용)
+  const rb = document.getElementById('reviewBtn');
+  if(rb) rb.onclick = ()=>{
+    state['s'+stageN].reviewMode = true;
+    state['s'+stageN].idx = 0;
     save();render();
   };
   const ns = document.getElementById('nextStage');
@@ -2864,7 +2926,11 @@ function render(){
   else if(state.cur===2||state.cur===3) renderPractice(state.cur);
   else renderTest(state.cur);
 
-  window.scrollTo({top:0,behavior:'smooth'});
+  // 단계 변경 시에만 위로 스크롤 (문제 답한 후 다음 문제 갈 땐 현재 스크롤 위치 그대로 유지)
+  if(window._lastStageRendered !== state.cur){
+    window.scrollTo({top:0,behavior:'instant'});
+    window._lastStageRendered = state.cur;
+  }
 }
 
 function stageDone(s){
@@ -2919,9 +2985,17 @@ load();
       save();
     } else if(params.get('scReview')){
       state.cur = 4;
+      // 학습일정에서 점수 클릭으로 진입한 경우: 풀이 데이터가 있으면 결과 화면 강제 표시
+      // (다시 풀기 버튼을 명시적으로 눌러야만 풀이 초기화)
+      if(state.s4 && Array.isArray(state.s4.ans) && state.s4.ans.some(a=>a)){
+        state.s4.done = true;
+      }
       save();
     } else if(params.get('examReview')){
       state.cur = 5;
+      if(state.s5 && Array.isArray(state.s5.ans) && state.s5.ans.some(a=>a)){
+        state.s5.done = true;
+      }
       save();
     }
   }catch(e){
