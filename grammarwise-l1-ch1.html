@@ -3017,7 +3017,11 @@ function render(){
   else if(state.cur===2||state.cur===3) renderPractice(state.cur);
   else renderTest(state.cur);
 
-  window.scrollTo({top:0,behavior:'instant'});
+  // 단계 변경 시에만 위로 스크롤 (문제 답한 후 다음 문제 갈 땐 현재 스크롤 위치 그대로 유지)
+  if(window._lastStageRendered !== state.cur){
+    window.scrollTo({top:0,behavior:'instant'});
+    window._lastStageRendered = state.cur;
+  }
 }
 
 function stageDone(s){
