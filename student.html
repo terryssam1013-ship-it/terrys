@@ -1134,6 +1134,7 @@ function renderNav(s){
         <div class="nav-logo"><img src="${LOGO}" alt="logo"><div><div class="academy">엠베스트SE 동탄남광장</div><div class="sub">${s.name||''} 학생${isPreview()?' (미리보기)':''}</div></div></div>
         <div class="nav-right">
             <span class="tag tag-blue">${s.level||''}</span>
+            ${isPreview()?'':`<button class="btn-ghost btn-sm" onclick="openPasswordChange()" title="비밀번호 변경">🔐 비번 변경</button>`}
             <button class="btn-ghost btn-sm" onclick="logout()">${isPreview()?'미리보기 닫기':'로그아웃'}</button>
         </div>
     </div></div>`;
@@ -2577,10 +2578,12 @@ function viewUnit(s){
     
     // 카드 한 줄을 생성하는 헬퍼
     const renderStep=(opts)=>{
-        const {key,num,title,subtitle,score,isDone,isLocked,isNext,onClick,detail,iconBg,iconColor}=opts;
+        const {key,num,title,subtitle,score,attempts,isDone,isLocked,isNext,onClick,detail,iconBg,iconColor}=opts;
         const expandedNow=expanded===key;
         // 점수가 있으면 (isDone 무관) 표시 — 통과 못해도 점수 보임
         const showScore=score!==null&&score!==undefined;
+        // 도전 횟수 (재시도): 2회 이상부터 표시
+        const showAttempts=typeof attempts==='number'&&attempts>=2;
         // 카드 본체 클릭 = 입장/재테스트 (이전 동작 유지)
         const cardClickJs=isLocked?'':(onClick||'');
         return `<div class="step-card ${isDone?'done':isNext?'current':'locked'}" style="cursor:${isLocked?'not-allowed':'pointer'}" onclick="${cardClickJs}">
@@ -2589,6 +2592,7 @@ function viewUnit(s){
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
                     <div style="font-weight:700">${title}</div>
                     <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                        ${showAttempts?`<span style="background:#EFF6FF;color:#1E40AF;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px" title="도전 횟수">🔁 ${attempts}회</span>`:''}
                         ${showScore?`<span class="tag ${score>=80?'tag-green':score>=60?'tag-amber':'tag-red'}" style="font-weight:700">${score}점</span>`:isLocked?'<span style="font-size:12px;color:var(--text3)">잠금</span>':''}
                         ${detail?`<button class="btn-sm btn-ghost" onclick="event.stopPropagation();toggleUnitStep('${key}')" style="padding:4px 10px;min-width:auto;font-size:12px" title="결과 상세보기">${expandedNow?'▲ 닫기':'▼ 결과'}</button>`:''}
                     </div>
@@ -2607,7 +2611,7 @@ function viewUnit(s){
         return renderStep({
             key:'art_'+idx, num:isDone?'✓':(idx+1), title:art.title,
             subtitle:isDone?'완료':'기사 읽기 + 문제 풀기',
-            score:scores.articles[idx], isDone, isLocked, isNext,
+            score:scores.articles[idx], attempts:scores.articleAttempts[idx], isDone, isLocked, isNext,
             onClick:isLocked?'':`openArticle(${idx})`,
             detail:isDone?renderArticleDetail(idx,scores):null,
             iconBg:isDone?'var(--green)':isNext?'var(--green-light)':'var(--bg3)',
@@ -2663,12 +2667,14 @@ function getUnitScores(bookName,unitKey,artCount){
     const uid=getUser().id;
     const progress=(LS.g('progress')||{})[uid]||[];
     const unitRecs=progress.filter(p=>p.unit===unitKey);
-    // 각 article의 최신 점수
+    // 각 article의 최신 점수 + 도전 횟수
     const articles=[];
+    const articleAttempts=[];
     for(let i=0;i<artCount;i++){
         const recs=unitRecs.filter(p=>p.articleIdx===i&&p.questions);
         const latest=recs.sort((a,b)=>b.timestamp-a.timestamp)[0];
         articles.push(latest?Math.round(latest.correctAnswers/latest.totalQuestions*100):null);
+        articleAttempts.push(recs.length);
     }
     // 새 훈련 구조 keys
     const tk=(k)=>'trtype_'+uid+'_'+unitKey+'_'+k;
@@ -2700,7 +2706,7 @@ function getUnitScores(bookName,unitKey,artCount){
     // 실전평가
     const assessRec=LS.g('assess_'+uid+'_'+bookName+'_'+unitKey);
     const exam=assessRec?(assessRec.score||0):null;
-    return {articles,train,trainTotal,exam,wordRec:oldWord,arrangeRec:oldArr,grammarRec:oldGram,assessRec,trainRec,trainStepsCount,trainInProgress,
+    return {articles,articleAttempts,train,trainTotal,exam,wordRec:oldWord,arrangeRec:oldArr,grammarRec:oldGram,assessRec,trainRec,trainStepsCount,trainInProgress,
             wl1,wl2,wSelf,st1,st2,st3,st4,ssAll};
 }
 
@@ -2945,7 +2951,9 @@ function viewTrainHub(s){
         const {idx,icon,title,desc,rec,locked,onClick,scoreLabel}=opts;
         const isDone=rec&&(rec.passed!==false);
         const hasRec=!!rec;
+        const attempts=rec&&typeof rec.attempts==='number'?rec.attempts:0;
         const lockBadge=locked?'<span class="tag" style="background:#F3F4F6;color:#9CA3AF">🔒 잠금</span>':'';
+        const attemptsBadge=attempts>=2?`<span style="background:#EFF6FF;color:#1E40AF;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-right:4px" title="도전 횟수">🔁 ${attempts}회</span>`:'';
         // 통과: 초록, 미통과 (점수 있음): 노랑, 없음: ''
         const scoreBadge=
             isDone?(scoreLabel?`<span class="tag tag-green">${scoreLabel}</span>`:'<span class="tag tag-green">✓ 완료</span>'):
@@ -2957,7 +2965,7 @@ function viewTrainHub(s){
                 <div style="font-weight:700;font-size:14px">${icon} ${title}</div>
                 <div style="font-size:11.5px;color:var(--text3);margin-top:2px">${desc}</div>
             </div>
-            ${scoreBadge}${lockBadge}
+            ${attemptsBadge}${scoreBadge}${lockBadge}
         </div>`;
     };
     
@@ -3361,13 +3369,23 @@ function sentSelfUnplace(at){
     state.sentSelfPlaced.splice(at,1);
     saveSentSelfProgress();render();
 }
-// Phase 3: 현재 문장 답안 확정 후 다음
+// Phase 3: 현재 문장 답안 확정 후 다음 문항(또는 다음 phase)
 function sentSelfSubmitArrange(){
     const arr=_phaseAnsArr();
     arr[state.sentSelfPhaseIdx]=[...state.sentSelfPlaced];
     state.sentSelfPlaced=[];
     saveSentSelfProgress();
-    _sentSelfAdvance();
+    const list=_phaseList();
+    // 현재 phase에 다음 문항이 있으면 그쪽으로
+    if(state.sentSelfPhaseIdx<list.length-1){
+        state.sentSelfPhaseIdx++;
+        const savedPlaced=arr[state.sentSelfPhaseIdx];
+        state.sentSelfPlaced=Array.isArray(savedPlaced)?[...savedPlaced]:[];
+        saveSentSelfProgress();render();
+    } else {
+        // 마지막 문항이면 다음 phase로
+        _sentSelfAdvance();
+    }
 }
 // Phase 4: 답 선택 후 바로 다음 (즉시 해설 없음)
 function sentSelfPickWrong(oi){
@@ -3482,7 +3500,10 @@ function submitSentSelfAll(){
     state.sentSelfResult=result;
     // LS 저장
     const uid=getUser().id;
-    LS.s('trtype_'+uid+'_'+state.unit+'_sentSelf',{score,passed,totalCorrect,totalQ,target,r1,r2,r3,r4,timestamp:Date.now()});
+    // 🎯 도전 횟수 카운트
+    const _prevSentSelf=LS.g('trtype_'+uid+'_'+state.unit+'_sentSelf');
+    const _ssAttempts=((_prevSentSelf&&_prevSentSelf.attempts)||0)+1;
+    LS.s('trtype_'+uid+'_'+state.unit+'_sentSelf',{score,passed,totalCorrect,totalQ,target,r1,r2,r3,r4,timestamp:Date.now(),attempts:_ssAttempts});
     // 학습 기록(progress)에도 저장
     {
         const pr=LS.g('progress')||{};if(!pr[uid])pr[uid]=[];
@@ -5426,6 +5447,9 @@ function submitTest(){
     if(state.testType==='selfcheck'){
         resultRec.detail=state.testResult?.detail;
     }
+    // 🎯 도전 횟수 카운트 (재시도 기록)
+    const _prevRecMain=LS.g('trtype_'+uid+'_'+state.unit+'_'+state.testType);
+    resultRec.attempts=((_prevRecMain&&_prevRecMain.attempts)||0)+1;
     safeSet('trtype_'+uid+'_'+state.unit+'_'+state.testType,resultRec);
     // 새 키 매핑 (호환성) — 단어 셀프체크는 wordSelf 키로도 저장
     if(state.testType==='selfcheck'){
@@ -6383,6 +6407,131 @@ function viewProgress(s){
 function logout(){
     if(isPreview()){window.close();return;}
     localStorage.removeItem('rl_current_user');window.location.href='login.html';
+}
+
+// ========== 🔐 비밀번호 변경 ==========
+const STUDENT_PWD_FB_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
+
+function openPasswordChange(){
+    const u = getUser();
+    if(!u || u.role !== 'student'){ alert('학생만 비밀번호 변경 가능합니다'); return; }
+    
+    // 모달 띄우기 (기존 모달 시스템 활용 안 하고 자체 오버레이로)
+    const existing = document.getElementById('pwd-change-modal');
+    if(existing) existing.remove();
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'pwd-change-modal';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    overlay.innerHTML = `
+        <div style="background:white;border-radius:12px;padding:24px;max-width:400px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,0.2)">
+            <h3 style="margin:0 0 16px;font-size:18px">🔐 비밀번호 변경</h3>
+            <div style="margin-bottom:12px">
+                <label style="display:block;font-size:13px;color:#666;margin-bottom:4px">현재 비밀번호</label>
+                <input type="password" id="pwd-current" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px" autocomplete="current-password">
+            </div>
+            <div style="margin-bottom:12px">
+                <label style="display:block;font-size:13px;color:#666;margin-bottom:4px">새 비밀번호 (4자 이상)</label>
+                <input type="password" id="pwd-new1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px" autocomplete="new-password">
+            </div>
+            <div style="margin-bottom:16px">
+                <label style="display:block;font-size:13px;color:#666;margin-bottom:4px">새 비밀번호 다시 입력</label>
+                <input type="password" id="pwd-new2" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px" autocomplete="new-password">
+            </div>
+            <div id="pwd-msg" style="font-size:13px;color:#c00;min-height:18px;margin-bottom:12px"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button onclick="closePasswordChange()" style="padding:8px 16px;border:1px solid #ccc;background:white;border-radius:6px;cursor:pointer">취소</button>
+                <button id="pwd-submit-btn" onclick="submitPasswordChange()" style="padding:8px 16px;border:none;background:#2563eb;color:white;border-radius:6px;cursor:pointer;font-weight:600">변경하기</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    // 클릭 외부면 닫기
+    overlay.addEventListener('click', (e) => { if(e.target === overlay) closePasswordChange(); });
+    setTimeout(() => { try{document.getElementById('pwd-current').focus();}catch(e){} }, 100);
+    // Enter 키
+    overlay.addEventListener('keydown', (e) => { if(e.key === 'Enter') submitPasswordChange(); });
+}
+
+function closePasswordChange(){
+    const m = document.getElementById('pwd-change-modal');
+    if(m) m.remove();
+}
+
+async function submitPasswordChange(){
+    const current = document.getElementById('pwd-current').value;
+    const new1 = document.getElementById('pwd-new1').value;
+    const new2 = document.getElementById('pwd-new2').value;
+    const msgEl = document.getElementById('pwd-msg');
+    const btn = document.getElementById('pwd-submit-btn');
+    
+    msgEl.style.color = '#c00';
+    msgEl.textContent = '';
+    
+    if(!current || !new1 || !new2){ msgEl.textContent = '모든 항목을 입력하세요'; return; }
+    if(new1.length < 4){ msgEl.textContent = '새 비밀번호는 4자 이상이어야 합니다'; return; }
+    if(new1 !== new2){ msgEl.textContent = '새 비밀번호가 일치하지 않습니다'; return; }
+    if(new1 === current){ msgEl.textContent = '현재 비밀번호와 동일합니다'; return; }
+    
+    const u = getUser();
+    if(!u){ msgEl.textContent = '로그인 정보를 찾을 수 없습니다'; return; }
+    
+    // 현재 비번 검증 (Firebase 우선 → rl_users 폴백)
+    btn.disabled = true;
+    btn.textContent = '확인 중...';
+    
+    let actualCurrentPwd = null;
+    try{
+        const r = await fetch(STUDENT_PWD_FB_URL + '/student_passwords/' + encodeURIComponent(u.id) + '.json?_t=' + Date.now(), {cache:'no-store'});
+        if(r.ok){
+            const data = await r.json();
+            if(data && data.password) actualCurrentPwd = data.password;
+        }
+    }catch(e){ /* 폴백 */ }
+    
+    if(actualCurrentPwd === null){
+        // Firebase에 없으면 rl_users에서 가져오기
+        const users = LS.g('users') || {};
+        actualCurrentPwd = users[u.id]?.password;
+    }
+    
+    if(current !== actualCurrentPwd){
+        msgEl.textContent = '현재 비밀번호가 틀렸습니다';
+        btn.disabled = false;
+        btn.textContent = '변경하기';
+        return;
+    }
+    
+    // Firebase에 저장
+    btn.textContent = '저장 중...';
+    try{
+        const r = await fetch(STUDENT_PWD_FB_URL + '/student_passwords/' + encodeURIComponent(u.id) + '.json', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({password: new1, changed: Date.now(), changedBy: 'student'})
+        });
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+    }catch(e){
+        msgEl.textContent = '저장 실패: 인터넷 연결을 확인하세요';
+        btn.disabled = false;
+        btn.textContent = '변경하기';
+        return;
+    }
+    
+    // 로컬 rl_users + rl_current_user 갱신
+    const users = LS.g('users') || {};
+    if(users[u.id]){
+        users[u.id].password = new1;
+        LS.s('users', users);
+    }
+    const cur = JSON.parse(RL_STORE.get('rl_current_user') || '{}');
+    cur.password = new1;
+    RL_STORE.set('rl_current_user', JSON.stringify(cur));
+    
+    msgEl.style.color = '#0a0';
+    msgEl.textContent = '✅ 비밀번호 변경 완료! 다음 로그인부터 새 비번을 사용하세요.';
+    btn.disabled = true;
+    btn.textContent = '완료';
+    setTimeout(closePasswordChange, 2000);
 }
 
 window.addEventListener('DOMContentLoaded',async()=>{
