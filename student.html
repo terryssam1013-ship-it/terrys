@@ -6281,44 +6281,41 @@ function renderGichulHistoryList(){
         var color = gichulCategoryColor(h.testId || h.testFile);
         var pctColor = h.pct >= 80 ? '#1a7350' : h.pct >= 60 ? '#d97706' : '#dc2626';
         var qs = Array.isArray(h.questions) ? h.questions : [];
-        var rightCount, wrongCount;
-        if(qs.length > 0){
-            rightCount = qs.filter(function(q){ return q && q.isCorrect === true; }).length;
-            wrongCount = qs.filter(function(q){ return q && q.isCorrect === false; }).length;
-        } else {
-            // Q 없는 옛날 데이터: 단어형 기준 (score = 맞은 수)
-            rightCount = h.score || 0;
-            wrongCount = (h.total || 0) - rightCount;
-            if(wrongCount < 0) wrongCount = 0;
-        }
         var hasDetail = qs.length > 0;
-        
+        var countLabel = '';
+        if(hasDetail){
+            var rightCount = qs.filter(function(q){ return q && q.isCorrect === true; }).length;
+            var wrongCount = qs.filter(function(q){ return q && q.isCorrect === false; }).length;
+            countLabel = ' · ✓' + rightCount + ' · ✗' + wrongCount;
+        }
+
         // 챕터 라벨
         var chapterLabel = '';
         if(h.chapterTitle) chapterLabel = ' · ' + gichulEscape(h.chapterTitle);
         else if(h.chapter !== null && h.chapter !== undefined && h.chapter !== '') chapterLabel = ' · Ch.' + h.chapter;
-        
+
         // 누적 정보
         var coverageLabel = '';
         if(Array.isArray(h.selectedChs) && h.selectedChs.length) coverageLabel = ' · 누적 ' + h.selectedChs.length + '개 챕터';
         else if(Array.isArray(h.selectedRounds) && h.selectedRounds.length) coverageLabel = ' · 누적 ' + h.selectedRounds.length + '개 회차';
-        
+
         var label = gichulTestLabel(h.testId || h.testFile);
+        var studentName = h.studentName || h.name || '';
         var caret = hasDetail ? '<div style="color:var(--text3);font-size:14px;flex-shrink:0">▾</div>' : '';
         var onclickAttr = hasDetail
             ? 'onclick="var d=document.getElementById(\'gichul-st-' + idx + '\');d.style.display=d.style.display===\'none\'?\'block\':\'none\'"'
             : '';
         var cursorStyle = hasDetail ? 'cursor:pointer' : '';
-        
+
         return '<div style="background:#fff;border:1px solid var(--border-light);border-left:4px solid ' + color + ';border-radius:10px;margin-bottom:8px;padding:12px 14px">'
             + '<div ' + onclickAttr + ' style="display:flex;align-items:center;gap:12px;' + cursorStyle + '">'
-            + '<div style="font-size:12px;color:var(--text2);flex-shrink:0;min-width:130px">' + gichulEscape(h.date||'') + '</div>'
             + '<div style="flex:1;min-width:0">'
-            +   '<div style="font-weight:600;color:var(--text);font-size:13px">' + gichulEscape(label) + chapterLabel + '</div>'
-            +   '<div style="font-size:11px;color:var(--text3);margin-top:2px">✓' + rightCount + ' · ✗' + wrongCount + coverageLabel + '</div>'
+            +   '<div style="font-size:11px;color:var(--text3);margin-bottom:3px">' + gichulEscape(studentName) + ' 학생 · ' + gichulEscape(h.date||'') + '</div>'
+            +   '<div style="font-weight:600;color:var(--text);font-size:14px;line-height:1.4">' + gichulEscape(label) + chapterLabel + '</div>'
+            +   (countLabel || coverageLabel ? '<div style="font-size:11px;color:var(--text3);margin-top:3px">' + countLabel.replace(/^ · /, '') + coverageLabel + '</div>' : '')
             + '</div>'
             + '<div style="text-align:right;flex-shrink:0">'
-            +   '<div style="font-weight:700;color:' + pctColor + '">' + h.score + '/' + h.total + '</div>'
+            +   '<div style="font-weight:700;font-size:18px;color:' + pctColor + '">' + h.score + '<span style="font-size:12px;color:var(--text3)">/' + h.total + '</span></div>'
             +   '<div style="font-size:11px;color:var(--text2)">' + h.pct + '점' + (h.grade ? ' · ' + gichulEscape(h.grade) : '') + '</div>'
             + '</div>'
             + caret
