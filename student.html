@@ -610,6 +610,48 @@ async function syncDownStudentState(){
     }
 }
 
+// 로컬에 있는 모든 학생 진도를 Firebase에 푸시
+// (기존에 쌓인 데이터를 첫 동기화 때 클라우드로 올림. 이후엔 매 동기화마다 로컬-only 키도 같이 푸시되어 누락 방지)
+async function syncUpLocalState(){
+    const sid = _syncGetStudentId();
+    if(!sid) return;
+    if(!RL_STORE.keys) return;
+    
+    let queued = 0;
+    let allKeys = [];
+    try{ allKeys = RL_STORE.keys() || []; }catch(e){ console.warn('[Sync] keys() 실패:', e); return; }
+    
+    for(const k of allKeys){
+        const type = _syncKeyType(k);
+        if(type === 'skip') continue;
+        const v = RL_STORE.get(k);
+        if(v === null || v === undefined) continue;
+        
+        if(type === 'uid-prefixed'){
+            if(!k.includes(sid)) continue;
+            _syncPushQueue[_syncSafeKey(k)] = v;
+            queued++;
+        } else if(type === 'uid-indexed'){
+            try{
+                const parsed = JSON.parse(v);
+                const myPortion = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed[sid] : null;
+                if(myPortion !== undefined && myPortion !== null){
+                    _syncPushQueue['__shared__' + _syncSafeKey(k)] = JSON.stringify(myPortion);
+                    queued++;
+                }
+            }catch(e){ /* skip malformed */ }
+        } else if(type === 'per-student-global'){
+            _syncPushQueue['__perstudent__' + _syncSafeKey(k)] = v;
+            queued++;
+        }
+    }
+    
+    if(queued > 0){
+        console.log('[Sync] 🚀 로컬 데이터 업로드: '+queued+'개 항목 푸시 대기 ('+sid+')');
+        _syncSchedulePush();
+    }
+}
+
 // 탭이 다시 보일 때 자동 재동기화
 document.addEventListener('visibilitychange', async function(){
     if(document.visibilityState !== 'visible') return;
