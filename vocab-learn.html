@@ -2131,7 +2131,7 @@ function clearSelfCheckProgress(){
     }catch(e){}
 }
 
-function saveSelfCheckScore(score,passed){
+function saveSelfCheckScore(score,passed,questions,answers){
     if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
     try{
         const key=_selfCheckStorageKey();
@@ -2141,6 +2141,23 @@ function saveSelfCheckScore(score,passed){
         const hist=(prev.history||[]).slice();
         hist.push({score:score,passed:!!passed,date:Date.now()});
         if(hist.length>10)hist.splice(0,hist.length-10);
+        // 📋 오답풀이용 문제 상세 저장 (다른 기기에서도 결과 확인 가능)
+        let reviewDetail=null;
+        if(Array.isArray(questions)&&Array.isArray(answers)){
+            reviewDetail=questions.map((q,i)=>{
+                const a=answers[i]||{};
+                return {
+                    prompt:q.prompt||q.question||'',
+                    type:q.type||'',
+                    options:q.options||q.choices||null,
+                    correctAnswer:q.answer!==undefined?q.answer:(q.correctAnswer!==undefined?q.correctAnswer:null),
+                    correctText:q.answerText||q.correctText||'',
+                    userAnswer:a.userAnswer!==undefined?a.userAnswer:(a.selected!==undefined?a.selected:null),
+                    correct:!!a.correct,
+                    explain:q.explain||q.explanation||''
+                };
+            });
+        }
         all[k]={
             score:score,
             bestScore:Math.max(score,prev.bestScore),
@@ -2150,7 +2167,8 @@ function saveSelfCheckScore(score,passed){
             deckId:state.deck.id,
             startDay:startDayNum,
             homework:homeworkSize,
-            history:hist
+            history:hist,
+            reviewDetail:reviewDetail||prev.reviewDetail||null
         };
         RL_STORE.set(key,JSON.stringify(all));
     }catch(e){console.error('셀프체크 점수 저장 실패:',e);}
@@ -2326,7 +2344,7 @@ function renderSelfCheckResult(){
     const unlocked=passedTarget||isRetake; // 잠금해제 조건
     
     // 잠금해제면 passed:true로 저장 → student.html이 실전평가 잠금해제
-    saveSelfCheckScore(score,unlocked);
+    saveSelfCheckScore(score,unlocked,sc.questions,sc.answers);
     clearSelfCheckProgress();
     
     const wrongs=sc.answers.filter(a=>!a.correct);
@@ -2406,7 +2424,7 @@ function _realExamStorageKey(){
     return 'rl_vc_realexam';
 }
 
-function saveRealExamScore(score){
+function saveRealExamScore(score,questions,answers){
     if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
     try{
         const key=_realExamStorageKey();
@@ -2416,6 +2434,23 @@ function saveRealExamScore(score){
         const hist=(prev.history||[]).slice();
         hist.push({score:score,date:Date.now()});
         if(hist.length>10)hist.splice(0,hist.length-10);
+        // 📋 오답풀이용 문제 상세 저장
+        let reviewDetail=null;
+        if(Array.isArray(questions)&&Array.isArray(answers)){
+            reviewDetail=questions.map((q,i)=>{
+                const a=answers[i]||{};
+                return {
+                    prompt:q.prompt||q.question||'',
+                    type:q.type||'',
+                    options:q.options||q.choices||null,
+                    correctAnswer:q.answer!==undefined?q.answer:(q.correctAnswer!==undefined?q.correctAnswer:null),
+                    correctText:q.answerText||q.correctText||'',
+                    userAnswer:a.userAnswer!==undefined?a.userAnswer:(a.selected!==undefined?a.selected:null),
+                    correct:!!a.correct,
+                    explain:q.explain||q.explanation||''
+                };
+            });
+        }
         all[k]={
             score:score,
             bestScore:Math.max(score,prev.bestScore),
@@ -2424,7 +2459,8 @@ function saveRealExamScore(score){
             deckId:state.deck.id,
             startDay:startDayNum,
             homework:homeworkSize,
-            history:hist
+            history:hist,
+            reviewDetail:reviewDetail||prev.reviewDetail||null
         };
         RL_STORE.set(key,JSON.stringify(all));
     }catch(e){console.error('실전평가 점수 저장 실패:',e);}
@@ -2592,7 +2628,7 @@ function renderRealExamResult(){
     const score=Math.round(correct/total*100);
     const passed=score>=vfs.realExam.target;
     
-    saveRealExamScore(score);
+    saveRealExamScore(score,re.questions,re.answers);
     clearRealExamProgress(); // 완료 → 진행 삭제 (다시 도전은 새 문제로)
     
     const wrongs=re.answers.filter(a=>!a.correct);
@@ -2966,6 +3002,35 @@ function _renderScoreHistory(rec,targetScore){
     return `<div style="font-size:11px;color:var(--gray);margin-top:6px;line-height:1.7">📊 시도 기록: ${items.join(' → ')}</div>`;
 }
 
+// 📋 오답풀이 HTML 생성 (reviewDetail 배열 → 틀린 문제 + 정답 + 해설)
+function _renderVocabReview(reviewDetail){
+    if(!Array.isArray(reviewDetail)||reviewDetail.length===0){
+        return '<div style="font-size:12px;color:#9CA3AF;padding:8px;text-align:center">상세 기록이 없습니다 (이전 버전에서 푼 시험)</div>';
+    }
+    const wrongs=reviewDetail.filter(d=>!d.correct);
+    if(wrongs.length===0){
+        return '<div style="font-size:13px;color:var(--green-d);padding:8px;text-align:center">🎉 모두 맞았습니다!</div>';
+    }
+    const LETTERS=['①','②','③','④','⑤'];
+    return wrongs.map((d,i)=>{
+        const opts=d.options;
+        let correctDisplay,userDisplay;
+        if(Array.isArray(opts)){
+            correctDisplay=(typeof d.correctAnswer==='number'?LETTERS[d.correctAnswer]+' ':'')+(opts[d.correctAnswer]||d.correctText||'');
+            userDisplay=(typeof d.userAnswer==='number'?LETTERS[d.userAnswer]+' ':'')+(opts[d.userAnswer]!==undefined?opts[d.userAnswer]:'(미응답)');
+        }else{
+            correctDisplay=d.correctText||'';
+            userDisplay=(d.userAnswer!==null&&d.userAnswer!==undefined&&d.userAnswer!=='')?d.userAnswer:'(미응답)';
+        }
+        return `<div style="background:#fff;border:1px solid #FCA5A5;border-radius:10px;padding:12px;margin-bottom:8px">
+            <div style="font-size:13px;font-weight:600;color:#1A1A1A;margin-bottom:6px">${i+1}. ${(d.prompt||'').replace(/<[^>]+>/g,' ')}</div>
+            <div style="font-size:13px;color:#EF4444;margin-bottom:3px">✗ 내 답: ${userDisplay}</div>
+            <div style="font-size:13px;color:#10B981;font-weight:600">✓ 정답: ${correctDisplay}</div>
+            ${d.explain?`<div style="margin-top:6px;padding:8px;background:#FAFAFA;border-radius:6px;font-size:12px;color:#4B5563;line-height:1.5">💡 ${d.explain}</div>`:''}
+        </div>`;
+    }).join('');
+}
+
 function renderLearningSummary(){
     const vfs=getVocabFlowSettings();
     
@@ -3072,6 +3137,10 @@ function renderLearningSummary(){
                 </div>
             </div>
             ${_renderScoreHistory(scRec,vfs.selfCheck.target)}
+            ${scRec.reviewDetail?`<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #E9D5FF">
+                <div style="font-size:12px;font-weight:700;color:#7C3AED;margin-bottom:8px">📋 오답풀이 (${(scRec.reviewDetail.filter(d=>!d.correct)).length}개)</div>
+                ${_renderVocabReview(scRec.reviewDetail)}
+            </div>`:''}
             <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #E9D5FF">
                 <button class="nav-btn nav-btn-primary" style="background:#A855F7;border-color:#A855F7;width:100%;font-size:13px;padding:8px" onclick="relearnSelfCheck()">↺ 셀프체크 다시 풀기</button>
             </div>
@@ -3093,6 +3162,10 @@ function renderLearningSummary(){
                 </div>
             </div>
             ${_renderScoreHistory(reRec,vfs.realExam.target)}
+            ${reRec.reviewDetail?`<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #FDE68A">
+                <div style="font-size:12px;font-weight:700;color:#D97706;margin-bottom:8px">📋 오답풀이 (${(reRec.reviewDetail.filter(d=>!d.correct)).length}개)</div>
+                ${_renderVocabReview(reRec.reviewDetail)}
+            </div>`:''}
             <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #FDE68A">
                 <button class="nav-btn nav-btn-primary" style="background:#F59E0B;border-color:#F59E0B;width:100%;font-size:13px;padding:8px" onclick="relearnRealExam()">↺ 실전평가 다시 풀기</button>
             </div>

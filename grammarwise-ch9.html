@@ -1999,6 +1999,9 @@ function syncNamogScoreToStudent(stageN){
       passed: passed,
       date: new Date().toISOString().slice(0,10)
     });
+    // 📋 풀이 답안도 저장 (다른 기기에서 결과/오답풀이 화면 복원용)
+    dataObj.lastAns = (s.ans||[]).map(a => a ? {value:a.value, ok:a.ok} : null);
+    dataObj.lastStage = stageN;
     localStorage.setItem(key, JSON.stringify(dataObj));
     // 진도 업데이트 (student.html은 progress.currentPoint를 읽음)
     const progKey = prefix + 'progress';
@@ -2942,6 +2945,36 @@ load();
 // ?scReview=N    → STEP 4(셀프체크) 화면 (재시험·결과)
 // ?examReview=N  → STEP 5(실전평가) 화면 (결과)
 // ============================================================
+// 📋 다른 기기에서 푼 답안을 rl_gr 기록에서 복원 (결과/오답풀이 화면용)
+//    로컬 state.s4/s5에 답안이 없을 때만 복원 (로컬 풀이 우선)
+function _restoreAnswersFromStudentRecord(stageN){
+  try{
+    const s = state['s'+stageN];
+    // 이미 로컬에 답안 있으면 복원 불필요
+    if(s && Array.isArray(s.ans) && s.ans.some(a=>a)) return;
+    const urlSid = new URLSearchParams(location.search).get('previewSid');
+    const isPv = !!urlSid;
+    let sid = urlSid;
+    if(!isPv){
+      try{ const u = JSON.parse(localStorage.getItem('rl_current_user')||'null'); sid = u && u.id; }catch(e){}
+    }
+    if(!sid) return;
+    const prefix = (isPv?'rl_pv_gr_':'rl_gr_') + sid + '_NAMOG' + NAMOG_LEVEL + '_';
+    const suffix = stageN===4 ? ('sc_'+NAMOG_CHAPTER_NO) : ('exam_'+NAMOG_CHAPTER_NO);
+    const key = prefix + suffix;
+    let dataObj;
+    try{ dataObj = JSON.parse(localStorage.getItem(key)||'null'); }catch(e){}
+    if(!dataObj || !Array.isArray(dataObj.lastAns)) return;
+    // 복원: lastAns → state.s.ans
+    state['s'+stageN] = {
+      idx: 0,
+      ans: dataObj.lastAns.map(a => a ? {value:a.value, ok:a.ok} : undefined),
+      done: true
+    };
+    console.log('[namog-restore] stage'+stageN+' 답안 복원 (다른 기기 풀이): '+dataObj.lastAns.length+'문제');
+  }catch(e){ console.warn('[namog-restore] failed:', e); }
+}
+
 (function handleEntryParams(){
   try{
     const params = new URLSearchParams(location.search);
@@ -2978,6 +3011,8 @@ load();
       save();
     } else if(params.get('scReview')){
       state.cur = 4;
+      // 로컬 풀이가 없으면 rl_gr 기록(다른 기기에서 푼 답안)에서 복원
+      _restoreAnswersFromStudentRecord(4);
       // 학습일정에서 점수 클릭으로 진입한 경우: 풀이 데이터가 있으면 결과 화면 강제 표시
       // (다시 풀기 버튼을 명시적으로 눌러야만 풀이 초기화)
       if(state.s4 && Array.isArray(state.s4.ans) && state.s4.ans.some(a=>a)){
@@ -2986,6 +3021,7 @@ load();
       save();
     } else if(params.get('examReview')){
       state.cur = 5;
+      _restoreAnswersFromStudentRecord(5);
       if(state.s5 && Array.isArray(state.s5.ans) && state.s5.ans.some(a=>a)){
         state.s5.done = true;
       }
