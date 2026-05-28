@@ -142,19 +142,59 @@ function initData(){
         else localStorage.setItem('rl_textbooks',v);
     }
 }
-function login(){
+const PWD_FB_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
+
+async function login(){
     const uid=document.getElementById('uid').value.trim();
     const pwd=document.getElementById('pwd').value;
     const users=JSON.parse(RL_STORE.get('rl_users')||'{}');
     if(!uid||!pwd){showError('아이디와 비밀번호를 입력하세요');return;}
-    const user=users[uid];
-    if(!user||user.password!==pwd){showError('아이디 또는 비밀번호가 올바르지 않습니다');return;}
+    let user=users[uid];
+    
+    // 🔐 Firebase에서 변경된 비밀번호 확인 (admin 계정명이 아니면 학생으로 간주)
+    //    rl_users에 학생이 없어도 Firebase 비번이 있으면 로그인 가능하게 처리
+    //    (다른 기기에서 curriculum.json 동기화 전이거나 신규 학생인 경우 대비)
+    const looksLikeAdmin = (user && user.role === 'admin');
+    let fbPassword = null;
+    if(!looksLikeAdmin){
+        try{
+            const r = await fetch(PWD_FB_URL + '/student_passwords/' + encodeURIComponent(uid) + '.json?_t=' + Date.now(), {cache:'no-store'});
+            if(r.ok){
+                const data = await r.json();
+                if(data && data.password){
+                    fbPassword = data.password;
+                }
+            }
+        }catch(e){ /* Firebase 안 닿으면 기본 비번으로 폴백 */ }
+    }
+    
+    // 검증할 비밀번호 결정: Firebase 변경 비번 > rl_users 기본 비번
+    let validPassword = null;
+    if(fbPassword !== null){
+        validPassword = fbPassword;
+    } else if(user){
+        validPassword = user.password;
+    }
+    
+    // 계정 자체가 없고 Firebase 비번도 없으면 로그인 불가
+    if(validPassword === null){
+        showError('아이디 또는 비밀번호가 올바르지 않습니다');
+        return;
+    }
+    
+    if(validPassword !== pwd){showError('아이디 또는 비밀번호가 올바르지 않습니다');return;}
+    
+    // user 정보가 로컬에 없으면 최소 정보로 구성 (Firebase 비번으로 인증된 학생)
+    if(!user){
+        user = {role:'student', name:uid};
+    }
+    
     RL_STORE.set('rl_current_user',JSON.stringify({id:uid,...user}));
     if(user.role==='admin')window.location.href='admin.html';
     else window.location.href='student.html';
 }
 function showError(msg){const el=document.getElementById('err');el.textContent=msg;el.style.display='block';}
-document.addEventListener('keypress',e=>{if(e.key==='Enter')login();});
+document.addEventListener('keypress',e=>{if(e.key==='Enter')login().catch(console.error);});
 
 // RLStorage 준비 후 로그인 페이지 초기화 (IndexedDB의 rl_users를 못 찾는 문제 해결)
 async function bootstrap(){
