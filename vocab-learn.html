@@ -3200,6 +3200,40 @@ function relearnRealExam(){
     startRealExam();
 }
 
+// 🚪 셀프체크 게이트 화면 — 모든 DAY 데이체크 통과 후, 셀프체크 시작 안내
+//    (재진입 시 데이체크 화면 대신 이 화면이 떠야 함)
+function _showSelfCheckGate(){
+    const scRec=getSelfCheckScore();
+    const vfs=getVocabFlowSettings();
+    const retake=scRec&&!scRec.passed; // 미통과 재시험 상황
+    document.getElementById('app').innerHTML=`<div class="summary-screen">
+        <div class="summary-emoji">📝</div>
+        <div class="summary-title">데이체크 완료!</div>
+        <div class="summary-sub">${homeworkSize}개 DAY 데이체크를 모두 통과했어요${retake?` · 셀프체크 ${scRec.bestScore}점 (목표 ${vfs.selfCheck.target}점)`:''}</div>
+        <div class="summary-cta" style="margin-top:24px;flex-direction:column;gap:8px">
+            <button class="nav-btn nav-btn-primary" onclick="startSelfCheck()" style="background:#A855F7;border-color:#A855F7;color:#fff;width:100%;padding:14px;font-size:15px">📝 셀프체크 ${retake?'다시 ':''}시작 (${homeworkSize}개 DAY 누적)</button>
+            <button class="nav-btn" onclick="goBack()" style="width:100%">📅 학습일정으로</button>
+        </div>
+    </div>`;
+    window.scrollTo({top:0,behavior:'instant'});
+}
+
+// 🚪 실전평가 게이트 화면 — 셀프체크 통과 후, 실전평가 시작 안내
+function _showRealExamGate(){
+    const reRec=(function(){try{const all=JSON.parse(RL_STORE.get(_realExamStorageKey())||'{}');return all[_selfCheckKey()]||null;}catch(e){return null;}})();
+    const vfs=getVocabFlowSettings();
+    document.getElementById('app').innerHTML=`<div class="summary-screen">
+        <div class="summary-emoji">🏆</div>
+        <div class="summary-title">셀프체크 통과!</div>
+        <div class="summary-sub">이제 실전평가에 도전하세요${reRec?` · 이전 ${reRec.bestScore}점`:''}</div>
+        <div class="summary-cta" style="margin-top:24px;flex-direction:column;gap:8px">
+            <button class="nav-btn nav-btn-primary" onclick="startRealExam()" style="background:#F59E0B;border-color:#F59E0B;color:#fff;width:100%;padding:14px;font-size:15px">🏆 실전평가 ${reRec?'다시 ':''}시작</button>
+            <button class="nav-btn" onclick="goBack()" style="width:100%">📅 학습일정으로</button>
+        </div>
+    </div>`;
+    window.scrollTo({top:0,behavior:'instant'});
+}
+
 // RLStorage 준비를 기다린 후 데이터 로드 (IndexedDB가 활성화된 후 정상 작동)
 async function initVocabLearn(){
     try{await RLStorage.init();}catch(e){console.error('RLStorage init failed:',e);}
@@ -3265,42 +3299,56 @@ async function initVocabLearn(){
         }
     }catch(e){}
     
-    // 1.5) 🔄 이 day의 데이체크를 이미 통과했으면 → 다음 단계로 자동 라우팅
-    //    (DAY1 통과 후 나갔다 들어온 경우, DAY1 데이체크 화면이 아니라 DAY2 학습으로)
+    // 1.5) 🎯 학습 단계 종합 판단 — 어느 단계까지 끝냈는지 보고 올바른 화면으로 라우팅
+    //    단계: [DAY들의 플래시→게임→데이체크] → 모두 통과 → 셀프체크 → 실전평가
+    //    URL의 day/idx 파라미터에 의존하지 않고, 저장된 통과 기록으로 현재 위치 판단
     if(!isPreview){
         try{
             const dcAll=JSON.parse(RL_STORE.get('rl_vc_daycheck')||'{}');
-            const thisRec=dcAll[state.deck.id+'/'+state.day.id];
-            if(thisRec && thisRec.passed){
-                // 이 day는 통과함. 다음 할 일 찾기:
-                // homeworkIdx < homeworkSize → 다음 DAY 학습으로 이동
-                if(homeworkIdx < homeworkSize){
-                    const nextDayNum = startDayNum + homeworkIdx; // 다음 day 번호
-                    const nextDayObj = state.deck.days[nextDayNum-1];
-                    if(nextDayObj){
-                        const pv = isPreview ? '&preview=1'+(studentId?'&student='+encodeURIComponent(studentId):'') : (studentId?'&student='+encodeURIComponent(studentId):'');
-                        // 다음 day의 진도 확인: 이미 통과했으면 더 넘어가도록 그 day로 보내서 재귀적 판단
-                        location.replace(`vocab-learn.html?deck=${encodeURIComponent(state.deck.id)}&day=${encodeURIComponent(nextDayObj.id)}&homework=${homeworkSize}&idx=${homeworkIdx+1}&startDay=${startDayNum}${pv}`);
+            
+            // (A) 아직 데이체크 통과 못 한 첫 DAY 찾기
+            let firstUnpassedDayNum=null;
+            for(let i=0;i<homeworkSize;i++){
+                const dNum=startDayNum+i;
+                const dObj=state.deck.days[dNum-1];
+                if(!dObj)break;
+                const rec=dcAll[state.deck.id+'/'+dObj.id];
+                if(!rec||!rec.passed){ firstUnpassedDayNum=dNum; break; }
+            }
+            
+            if(firstUnpassedDayNum!==null){
+                // 아직 통과 못한 DAY가 있음 → 그 DAY로 이동 (현재 로드된 day와 다르면 교체)
+                const targetDayObj=state.deck.days[firstUnpassedDayNum-1];
+                if(targetDayObj && targetDayObj.id !== state.day.id){
+                    const targetIdx=(firstUnpassedDayNum-startDayNum)+1;
+                    const pv=studentId&&studentId!=='pv'?'&student='+encodeURIComponent(studentId):'';
+                    location.replace(`vocab-learn.html?deck=${encodeURIComponent(state.deck.id)}&day=${encodeURIComponent(targetDayObj.id)}&homework=${homeworkSize}&idx=${targetIdx}&startDay=${startDayNum}${pv}`);
+                    return;
+                }
+                // 현재 day가 바로 그 통과 못한 day → 아래 플래시 진도 복원 로직으로 진행
+            } else {
+                // (B) 모든 DAY 데이체크 통과 완료 → 셀프체크/실전평가 단계
+                const scRec=getSelfCheckScore();
+                if(!scRec || !scRec.passed){
+                    // 셀프체크 아직 안 함(또는 미통과) → 셀프체크 안내 결과화면
+                    //    마지막 day 기준으로 "셀프체크 시작" 버튼 뜨는 결과화면 표시
+                    const lastDayNum=startDayNum+homeworkSize-1;
+                    const lastDayObj=state.deck.days[lastDayNum-1];
+                    if(lastDayObj && lastDayObj.id!==state.day.id){
+                        const pv=studentId&&studentId!=='pv'?'&student='+encodeURIComponent(studentId):'';
+                        location.replace(`vocab-learn.html?deck=${encodeURIComponent(state.deck.id)}&day=${encodeURIComponent(lastDayObj.id)}&homework=${homeworkSize}&idx=${homeworkSize}&startDay=${startDayNum}${pv}`);
                         return;
                     }
+                    // 셀프체크 진입 안내 화면 (데이체크 결과화면 재활용 — 셀프체크 버튼 노출)
+                    _showSelfCheckGate();
+                    return;
                 } else {
-                    // 마지막 day까지 통과 → 셀프체크 단계 (모든 day 통과 시)
-                    if(_checkAllHomeworkDaysPassed()){
-                        // 셀프체크 결과/진입은 startSelfCheck 흐름. 여기선 결과화면 띄우고 셀프체크 버튼 노출.
-                        startLearning(loaded.deck, loaded.day);
-                        state.done = true;
-                        state.reviewQueue = [];
-                        // 모든 단어 외운 것으로 표시 (결과화면에서 셀프체크 버튼 뜨도록)
-                        try{
-                            const prog=loadLearningProgress();
-                            if(prog&&prog.knew){ state.knewSet=new Set(prog.knew); state.knew=state.knewSet.size; }
-                        }catch(e){}
-                        render();
-                        return;
-                    }
+                    // 셀프체크 통과함 → 실전평가 안내
+                    _showRealExamGate();
+                    return;
                 }
             }
-        }catch(e){}
+        }catch(e){console.warn('단계 판단 실패:',e);}
     }
     
     // 2) 플래시모드 완료 상태 복원 — 결과 화면(renderSummary)로 진입
