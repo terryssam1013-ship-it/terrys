@@ -3310,6 +3310,13 @@ function _showRealExamGate(){
 // RLStorage 준비를 기다린 후 데이터 로드 (IndexedDB가 활성화된 후 정상 작동)
 async function initVocabLearn(){
     try{await RLStorage.init();}catch(e){console.error('RLStorage init failed:',e);}
+    // 📥 새 기기(아이패드 등)에서 진입 시 Firebase에서 단어 학습 진도 먼저 받아오기
+    //    (localStorage가 비어있어도 다른 기기에서 한 데이체크/셀프체크/실전 기록 복원)
+    try{
+        if(window.StudentSync && typeof window.StudentSync.syncDown === 'function'){
+            await window.StudentSync.syncDown();
+        }
+    }catch(e){ console.warn('[vocab-init] syncDown 실패:', e); }
     
     // 📦 GitHub의 curriculum.json 자동 동기화
     if(window.syncCurriculum){

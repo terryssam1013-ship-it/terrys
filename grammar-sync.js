@@ -145,5 +145,92 @@
         if(document.visibilityState === 'hidden') flushPush(true);
     });
     
+    // ════════════════════════════════════════════════════════════════
+    // 📥 다운로드: Firebase에서 이 학생의 진도를 받아와 localStorage에 복원
+    //    새 기기(아이패드 등)에서 처음 챕터/단어 페이지 들어왔을 때
+    //    localStorage가 비어있어도 Firebase에서 받아와서 결과 화면 표시 가능
+    // ════════════════════════════════════════════════════════════════
+    function _restoreKey(fbKey, value){
+        try{
+            if(fbKey.startsWith('__vshared__')){
+                // 단어 학습 키 (rl_vc_*, rl_vocab_game_scores): {deckId/dayId: rec} 병합
+                const realKey = fbKey.substring('__vshared__'.length);
+                if(typeof value !== 'string') return;
+                let remoteDict; try{ remoteDict = JSON.parse(value); }catch(e){ return; }
+                if(typeof remoteDict !== 'object' || Array.isArray(remoteDict)) return;
+                let localDict = {};
+                try{ const ls = origGetItem(realKey); if(ls) localDict = JSON.parse(ls)||{}; }catch(e){ localDict = {}; }
+                if(typeof localDict !== 'object' || Array.isArray(localDict)) localDict = {};
+                for(const dk in remoteDict){
+                    const r = remoteDict[dk], l = localDict[dk];
+                    if(!l){ localDict[dk] = r; continue; }
+                    const rt = (r&&(r.lastAttempt||r.timestamp||r.date))||'';
+                    const lt = (l&&(l.lastAttempt||l.timestamp||l.date))||'';
+                    if(String(rt) >= String(lt)) localDict[dk] = r;
+                }
+                origSetItem(realKey, JSON.stringify(localDict));
+            } else if(fbKey.startsWith('__shared__')){
+                // rl_progress 등: {sid: data} 구조 → 현재 학생 부분만 머지
+                const realKey = fbKey.substring('__shared__'.length);
+                const sid = getCurrentSid();
+                if(!sid || typeof value !== 'string') return;
+                let myData; try{ myData = JSON.parse(value); }catch(e){ return; }
+                let dict = {};
+                try{ const ls = origGetItem(realKey); if(ls) dict = JSON.parse(ls)||{}; }catch(e){ dict = {}; }
+                if(typeof dict !== 'object' || Array.isArray(dict)) dict = {};
+                dict[sid] = myData;
+                origSetItem(realKey, JSON.stringify(dict));
+            } else if(fbKey.startsWith('__perstudent__')){
+                const realKey = fbKey.substring('__perstudent__'.length);
+                if(typeof value === 'string') origSetItem(realKey, value);
+            } else {
+                // uid-prefixed: 키 그대로 복원 (단, 로컬에 이미 있으면 덮어쓰지 않음 — 로컬 우선)
+                const realKey = unsafeKey(fbKey);
+                if(value === null) return;
+                const existing = origGetItem(realKey);
+                if(existing === null || existing === undefined){
+                    origSetItem(realKey, typeof value === 'string' ? value : JSON.stringify(value));
+                }
+            }
+        }catch(e){ /* 개별 키 복원 실패는 무시 */ }
+    }
+    
+    // safeKey 역변환 (안전): Firebase 키는 _로 치환됐을 수 있으나 rl_gr_ 등은 영숫자/_라 대부분 그대로
+    function unsafeKey(k){ return k; }
+    const origGetItem = localStorage.getItem.bind(localStorage);
+    
+    var _syncDownDone = false;
+    function syncDownStudentState(){
+        return new Promise(function(resolve){
+            const sid = getCurrentSid();
+            if(!sid){ resolve(false); return; }
+            const url = SYNC_FB_URL + '/student_state/' + encodeURIComponent(sid) + '.json?_t=' + Date.now();
+            fetch(url, {cache:'no-store'}).then(function(r){
+                if(!r.ok){ resolve(false); return; }
+                return r.json();
+            }).then(function(data){
+                if(!data || typeof data !== 'object'){ resolve(false); return; }
+                var n = 0;
+                for(const fbKey in data){
+                    _restoreKey(fbKey, data[fbKey]);
+                    n++;
+                }
+                _syncDownDone = true;
+                console.log('[Student Sync] 📥 '+n+'개 항목 받아옴 (sid: '+sid+')');
+                resolve(true);
+            }).catch(function(e){
+                console.warn('[Student Sync] 받아오기 실패:', e);
+                resolve(false);
+            });
+        });
+    }
+    
+    // 전역 노출: 챕터/단어 페이지가 진입 시 await window.StudentSync.syncDown() 호출 가능
+    window.StudentSync = {
+        syncDown: syncDownStudentState,
+        flushUp: function(){ flushPush(false); },
+        isReady: function(){ return _syncDownDone; }
+    };
+    
     console.log('[Student Sync] 활성화 (학생: '+(getCurrentSid()||'미로그인')+')');
 })();

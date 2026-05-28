@@ -2809,7 +2809,13 @@ function _restoreAnswersFromStudentRecord(stageN){
   }catch(e){ console.warn('[namog-restore] failed:', e); }
 }
 
-(function handleEntryParams(){
+(async function handleEntryParams(){
+  // 📥 새 기기(아이패드 등)에서 진입 시 Firebase에서 진도 먼저 받아오기
+  try{
+    if(window.StudentSync && typeof window.StudentSync.syncDown === 'function'){
+      await window.StudentSync.syncDown();
+    }
+  }catch(e){ console.warn('[entry] syncDown 실패:', e); }
   try{
     const params = new URLSearchParams(location.search);
     // 주간평가 진입 (wsc=N: 훈련, wex=N: 실전)
@@ -2864,8 +2870,8 @@ function _restoreAnswersFromStudentRecord(stageN){
   }catch(e){
     console.warn('[entry-params] failed:', e);
   }
+  render();
 })();
-render();
 
 // Reset button handler
 document.getElementById('resetBtn').onclick = ()=>{
