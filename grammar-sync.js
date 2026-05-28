@@ -46,8 +46,11 @@
         // 학생 ID가 suffix로 붙은 키 (rl_vc_daycheck_progress_<sid> 등) — 그대로 푸시
         if(/^rl_vc_daycheck_progress_/.test(k)) return 'uid-prefixed';
         if(/^rl_vocab_progress_/.test(k)) return 'uid-prefixed';
+        // 단어 학습 결과 키 (rl_vc_daycheck, rl_vc_selfcheck, rl_vc_realexam, rl_vc_weeklyexam_*):
+        //   값이 {deckId/dayId: rec} 구조 = 학생 본인 데이터. Firebase 경로가 학생별 분리돼 있으니 통째로 동기화.
+        if(/^rl_vc_/.test(k)) return 'uid-prefixed-shared';
+        if(k === 'rl_vocab_game_scores') return 'uid-prefixed-shared';
         if(k === 'rl_progress') return 'uid-indexed';
-        if(/^rl_vc_/.test(k)) return 'uid-indexed';
         if(k === 'rl_active_week') return 'per-student-global';
         return 'skip';
     }
@@ -108,6 +111,9 @@
         if(type === 'uid-prefixed'){
             if(!k.includes(sid)) return;
             pushQueue[safeKey(k)] = v;
+        } else if(type === 'uid-prefixed-shared'){
+            // 단어 학습 결과 키 - 통째로 푸시 (Firebase 경로가 학생별 분리)
+            pushQueue['__vshared__' + safeKey(k)] = v;
         } else if(type === 'uid-indexed'){
             try{
                 const parsed = (v === null || v === undefined) ? null : JSON.parse(v);

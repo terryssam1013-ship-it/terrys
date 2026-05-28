@@ -421,7 +421,7 @@ let _syncPushTimer = null;
 // 키 카테고리 판별
 function _syncKeyType(k){
     if(!k || typeof k !== 'string' || !k.startsWith('rl_')) return 'skip';
-    // uid-prefixed: 키 이름이 학생 진도용
+    // uid-prefixed: 키 이름이 학생 진도용 (값을 통째로 동기화)
     if(/^rl_gr_/.test(k)) return 'uid-prefixed';
     if(/^rl_gichul_history_/.test(k)) return 'uid-prefixed';
     if(/^rl_inprog_/.test(k)) return 'uid-prefixed';
@@ -430,9 +430,15 @@ function _syncKeyType(k){
     if(/^rl_done_/.test(k)) return 'uid-prefixed';
     if(/^rl_weekly_/.test(k)) return 'uid-prefixed';
     if(/^rl_assess_/.test(k)) return 'uid-prefixed';
+    // 단어 학습 키들 (rl_vc_*, rl_vocab_*): 값이 {deckId/dayId: 데이터} 구조 = 학생 본인 데이터
+    //   → 통째로 동기화 (uid-prefixed처럼). 단, 한 기기에 한 학생만 로그인하므로 안전.
+    //   ⚠️ 이 키들은 학생별 분리가 안 돼 있으므로, 학원 공용 기기 사용 시
+    //      로그아웃 때 로컬에서 지워지도록 별도 관리 필요 (아래 syncDown에서 처리)
+    if(/^rl_vc_/.test(k)) return 'uid-prefixed-shared';
+    if(/^rl_vocab_progress_/.test(k)) return 'uid-prefixed';
+    if(/^rl_vocab_game_scores$/.test(k)) return 'uid-prefixed-shared';
     // uid-indexed (global key, value is {sid: data} dict)
     if(k === 'rl_progress') return 'uid-indexed';
-    if(/^rl_vc_/.test(k)) return 'uid-indexed';
     if(k === 'rl_active_week') return 'per-student-global'; // 단순 문자열
     return 'skip';
 }
@@ -462,6 +468,10 @@ function _syncQueuePush(k, v){
         // 안전장치: 키에 현재 학생 sid가 포함되어 있어야만 동기화 (다른 학생 데이터 누출 방지)
         if(!k.includes(sid)) return;
         _syncPushQueue[_syncSafeKey(k)] = v;
+    } else if(type === 'uid-prefixed-shared'){
+        // 단어 학습 키 (rl_vc_*, rl_vocab_game_scores): 값이 {deckId/dayId: rec} 구조.
+        // Firebase 경로가 이미 /student_state/<sid>/ 로 학생별 분리돼 있으므로 통째로 저장해도 안전.
+        _syncPushQueue['__vshared__' + _syncSafeKey(k)] = v;
     } else if(type === 'uid-indexed'){
         // 글로벌 dict 키 - 현재 학생 부분만 추출
         try{
@@ -564,7 +574,32 @@ async function syncDownStudentState(){
             const value = data[fbKey];
             if(value === null || value === undefined) continue;
             
-            if(fbKey.startsWith('__shared__')){
+            if(fbKey.startsWith('__vshared__')){
+                // 단어 학습 키 (rl_vc_*, rl_vocab_game_scores): {deckId/dayId: rec} 구조.
+                // 다른 기기에서 다른 day를 한 경우를 보존하기 위해 dict 병합 (Firebase가 더 최신이면 덮어씀).
+                const realKey = fbKey.substring('__vshared__'.length);
+                if(typeof value !== 'string') continue;
+                let remoteDict;
+                try{ remoteDict = JSON.parse(value); }catch(e){ continue; }
+                if(typeof remoteDict !== 'object' || Array.isArray(remoteDict)) continue;
+                let localDict = {};
+                try{
+                    const localStr = RL_STORE.get(realKey);
+                    if(localStr) localDict = JSON.parse(localStr) || {};
+                }catch(e){ localDict = {}; }
+                if(typeof localDict !== 'object' || Array.isArray(localDict)) localDict = {};
+                // 병합: 각 deckId/dayId별로 더 최신(timestamp/attempts 큰) 것 유지
+                for(const dk in remoteDict){
+                    const r = remoteDict[dk], l = localDict[dk];
+                    if(!l){ localDict[dk] = r; continue; }
+                    // 둘 다 있으면 timestamp 또는 attempts 비교
+                    const rt = (r&&(r.lastAttempt||r.timestamp||r.date))||'';
+                    const lt = (l&&(l.lastAttempt||l.timestamp||l.date))||'';
+                    if(String(rt) >= String(lt)) localDict[dk] = r;
+                }
+                RL_STORE.__origSet.call(RL_STORE, realKey, JSON.stringify(localDict));
+                restoredShared++;
+            } else if(fbKey.startsWith('__shared__')){
                 // uid-indexed 글로벌 키: 로컬 dict에 현재 학생 부분만 머지
                 const realKey = fbKey.substring('__shared__'.length);
                 if(typeof value !== 'string') continue;
@@ -630,6 +665,10 @@ async function syncUpLocalState(){
         if(type === 'uid-prefixed'){
             if(!k.includes(sid)) continue;
             _syncPushQueue[_syncSafeKey(k)] = v;
+            queued++;
+        } else if(type === 'uid-prefixed-shared'){
+            // 단어 학습 키 - 통째로 푸시
+            _syncPushQueue['__vshared__' + _syncSafeKey(k)] = v;
             queued++;
         } else if(type === 'uid-indexed'){
             try{

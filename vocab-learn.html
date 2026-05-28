@@ -205,11 +205,11 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;background:#f5f
   .fill-example{font-size:18px}
 }
 /* ========== 데이체크 (단어 체크 시험) ========== */
-.dc-screen{max-width:680px;margin:0 auto;padding:20px}
+.dc-screen{width:100%;margin:0 auto;padding:8px 0 20px;box-sizing:border-box}
 .dc-header{display:flex;justify-content:space-between;align-items:center;margin:12px 0 20px}
 .dc-progress-text{font-size:14px;color:var(--gray);font-weight:600}
 .dc-type-badge{padding:5px 11px;border-radius:12px;color:#fff;font-size:11px;font-weight:700;letter-spacing:.3px}
-.dc-card{background:#fff;border:1.5px solid var(--border);border-radius:14px;padding:28px 22px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.dc-card{background:#fff;border:1.5px solid var(--border);border-radius:14px;padding:28px 22px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.04);width:100%;box-sizing:border-box}
 .dc-question{font-size:14px;color:var(--gray);font-weight:600;margin-bottom:18px;text-align:center}
 .dc-prompt-word{font-size:34px;font-weight:800;text-align:center;color:#1A1A1A;letter-spacing:.5px;padding:8px 0}
 .dc-prompt-meaning{font-size:22px;font-weight:700;text-align:center;color:#1A1A1A;line-height:1.5;padding:8px 0}
@@ -224,8 +224,8 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;background:#f5f
 .summary-day-item{padding:8px 10px;background:#F9FAFB;border-radius:8px}
 .summary-day-label{font-size:11px;color:var(--gray);font-weight:600;margin-bottom:3px}
 .summary-day-value{font-size:16px;font-weight:700;color:#1A1A1A}
-.dc-choices{display:flex;flex-direction:column;gap:10px}
-.dc-choice{display:flex;align-items:center;gap:14px;background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;font-size:15px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit;text-align:left;color:#1A1A1A}
+.dc-choices{display:flex;flex-direction:column;gap:10px;width:100%}
+.dc-choice{display:flex;align-items:center;gap:14px;background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;font-size:15px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit;text-align:left;color:#1A1A1A;width:100%;box-sizing:border-box}
 .dc-choice:hover:not(:disabled){border-color:#3B82F6;background:#EFF6FF}
 .dc-choice:disabled{cursor:not-allowed;opacity:.7}
 .dc-choice-num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#F3F4F6;color:#6B7280;border-radius:50%;font-size:13px;font-weight:700;flex-shrink:0}
@@ -404,7 +404,8 @@ function getVocabFlowSettings(){
         const settings=JSON.parse(RL_STORE.get('rl_settings')||'{}');
         const vf=settings.vocabFlow||{};
         return {
-            gamesRequired: vf.gamesRequired!==undefined?vf.gamesRequired:defaults.gamesRequired,
+            // 최소 1개 게임은 무조건 완료해야 데이체크 가능 (어드민 설정과 무관)
+            gamesRequired: Math.max(1, vf.gamesRequired!==undefined?vf.gamesRequired:defaults.gamesRequired),
             dayCheck:{
                 target: vf.dayCheck?.target!==undefined?vf.dayCheck.target:defaults.dayCheck.target,
                 ratio: vf.dayCheck?.ratio||defaults.dayCheck.ratio
@@ -1686,9 +1687,8 @@ function getDayCheckScore(deckId,dayId){
 
 function _dayCheckStorageKey(){
     // 미리보기는 별도 키, 학생은 본인 키
-    if(typeof isPreview==='function'&&isPreview()){
-        const pid=typeof getPreviewId==='function'?getPreviewId():'pv';
-        return 'rl_pv_'+pid+'_vc_daycheck';
+    if(isPreview){
+        return 'rl_pv_'+studentId+'_vc_daycheck';
     }
     return 'rl_vc_daycheck';
 }
