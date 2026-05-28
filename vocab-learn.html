@@ -1652,6 +1652,7 @@ function endMoleGame(){
 function saveGameScore(gameType,score,accuracy){
     // 게임 완료 추적 (데이체크 잠금해제 조건)
     state.gamesCompleted.add(gameType);
+    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
     try{
         const key='rl_vocab_game_scores';
         const all=JSON.parse(RL_STORE.get(key)||'{}');

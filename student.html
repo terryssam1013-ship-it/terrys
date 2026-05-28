@@ -6048,7 +6048,41 @@ function openVocabTrain(deckId,startDay,homeworkPerDay){
     const isPv=isPreview();
     const sid=isPv?getPreviewId():(getUser()?.id||'unknown');
     const pvParam=isPv?`&preview=1&student=${encodeURIComponent(sid)}`:`&student=${encodeURIComponent(sid)}`;
-    const url=`vocab-learn.html?deck=${encodeURIComponent(deckId)}&day=${encodeURIComponent(day.id)}&homework=${homeworkPerDay}&idx=1&startDay=${startDay}${pvParam}`;
+    
+    // 🔄 이어하기: 이미 데이체크 통과한 day는 건너뛰고, 진행 중인 day로 진입
+    //    (예: day1·day2 숙제에서 day1 데이체크 통과 + day2 플래시 진행 중이면 → day2로 진입)
+    let resumeDay = startDay;
+    let resumeIdx = 1;
+    if(!isPv){
+        try{
+            const dcAll = JSON.parse(RL_STORE.get('rl_vc_daycheck')||'{}');
+            // startDay부터 순서대로 검사: 데이체크 통과한 day는 건너뜀
+            for(let off=0; off<homeworkPerDay; off++){
+                const dNum = startDay + off;
+                const dObj = deck.days[dNum-1];
+                if(!dObj) break;
+                const rec = dcAll[deckId+'/'+dObj.id];
+                if(rec && rec.passed){
+                    // 이 day는 통과 → 다음 day로
+                    resumeDay = dNum + 1;
+                    resumeIdx = off + 2; // homeworkIdx (1-based) 다음 값
+                } else {
+                    // 통과 안 한 첫 day에서 멈춤 (여기서 이어하기)
+                    resumeDay = dNum;
+                    resumeIdx = off + 1;
+                    break;
+                }
+            }
+            // 모든 day 통과했으면 startDay로 (셀프체크 단계는 vocab-learn 내부에서 판단)
+            if(resumeDay > startDay + homeworkPerDay - 1){
+                resumeDay = startDay;
+                resumeIdx = 1;
+            }
+        }catch(e){ resumeDay = startDay; resumeIdx = 1; }
+    }
+    
+    const resumeDayObj = deck.days[resumeDay-1] || day;
+    const url=`vocab-learn.html?deck=${encodeURIComponent(deckId)}&day=${encodeURIComponent(resumeDayObj.id)}&homework=${homeworkPerDay}&idx=${resumeIdx}&startDay=${startDay}${pvParam}`;
     window.open(url,'_blank');
 }
 
