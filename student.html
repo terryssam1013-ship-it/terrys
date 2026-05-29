@@ -2385,6 +2385,9 @@ function executeSkipWeek(){
             }
             
             // 단어 — 시작일 이후면 처리
+            // ⚠️ adminCompleteVocabTrain/Exam은 "이전 학습일까지 체인 통과" 로직이 있어서
+            //    "주 넘기기"에 부적합 (다음 주차 데이터까지 변형됨).
+            //    → 직접 데이터에 이번 주 dayStart만 기록.
             if(vocabDeckId){
                 const vocabActive=!vocabStartDate||sess.date>=vocabStartDate;
                 if(vocabActive){
@@ -2403,14 +2406,93 @@ function executeSkipWeek(){
                         const dayStart=vocabStartDay+vLessonIdx*vocabHomeworkPerDay;
                         const totalDays=(deck.days||[]).length;
                         if(dayStart<=totalDays){
-                            try{ adminCompleteVocabTrain(vocabDeckId,dayStart,vocabHomeworkPerDay,true); processed++; }catch(e){errors.push('단어 훈련 DAY'+dayStart+': '+e.message);}
-                            try{ adminCompleteVocabExam(vocabDeckId,dayStart,vocabHomeworkPerDay,true); processed++; }catch(e){errors.push('단어 실전 DAY'+dayStart+': '+e.message);}
+                            // 데이체크/셀프체크/실전평가 — 이번 학습일 키만 직접 기록
+                            const adminRec={score:0,bestScore:0,passed:true,attempts:1,lastAttempt:new Date().toISOString(),adminCompleted:true,skipped:true,history:[{score:0,passed:true,date:Date.now(),admin:true,skipped:true}]};
+                            try{
+                                // 데이체크 (이번 학습일에 포함된 DAY들만)
+                                const dcKey='rl_vc_daycheck';
+                                const dcAll=JSON.parse(RL_STORE.get(dcKey)||'{}');
+                                const maxDay=Math.min(dayStart+vocabHomeworkPerDay-1,totalDays);
+                                for(let d=dayStart;d<=maxDay;d++){
+                                    const dayObj=deck.days[d-1];
+                                    if(!dayObj)continue;
+                                    const dk=vocabDeckId+'/'+dayObj.id;
+                                    if(!dcAll[dk]||!dcAll[dk].passed) dcAll[dk]={...adminRec};
+                                }
+                                RL_STORE.set(dcKey,JSON.stringify(dcAll));
+                                
+                                // 셀프체크 (이번 학습일 키만)
+                                const scKey='rl_vc_selfcheck';
+                                const scAll=JSON.parse(RL_STORE.get(scKey)||'{}');
+                                const scK=vocabDeckId+'/'+dayStart+'_'+vocabHomeworkPerDay;
+                                if(!scAll[scK]||!scAll[scK].passed){
+                                    scAll[scK]={...adminRec,deckId:vocabDeckId,startDay:dayStart,homework:vocabHomeworkPerDay};
+                                }
+                                RL_STORE.set(scKey,JSON.stringify(scAll));
+                                
+                                // 실전평가 (이번 학습일 키만)
+                                const reKey='rl_vc_realexam';
+                                const reAll=JSON.parse(RL_STORE.get(reKey)||'{}');
+                                if(!reAll[scK]){
+                                    reAll[scK]={...adminRec,deckId:vocabDeckId,startDay:dayStart,homework:vocabHomeworkPerDay};
+                                }
+                                RL_STORE.set(reKey,JSON.stringify(reAll));
+                                
+                                processed+=2; // 훈련+실전 = 2개
+                            }catch(e){errors.push('단어 DAY'+dayStart+': '+e.message);}
                         }
                     }
                 }
             }
         }
     });
+    
+    // 단어 주간평가 — 이번 주에 평가일이 있고 단어 학습일이 있었으면 주간평가 통과
+    try{
+        const sd_=sd; // closure 변수
+        if(vocabDeckId){
+            const vIdx=LS.g('vocab_index')||{};
+            const deck=vIdx[vocabDeckId];
+            if(deck&&(deck.days||[]).length>0){
+                // 이번 주 단어 학습일 dayStart 범위
+                let weekDayStart=null,weekDayEnd=null;
+                weekSessions.forEach(sess=>{
+                    if(sess.isWeeklyTest)return;
+                    if(vocabStartDate&&sess.date<vocabStartDate)return;
+                    let vLI=0;
+                    for(let j=0;j<allSessions.length;j++){
+                        const as=allSessions[j];
+                        if(as.isWeeklyTest)continue;
+                        if(vocabStartDate&&as.date<vocabStartDate)continue;
+                        if(as.date.getTime()===sess.date.getTime())break;
+                        vLI++;
+                    }
+                    const ds=vocabStartDay+vLI*vocabHomeworkPerDay;
+                    const de=Math.min(ds+vocabHomeworkPerDay-1,(deck.days||[]).length);
+                    if(weekDayStart===null||ds<weekDayStart)weekDayStart=ds;
+                    if(weekDayEnd===null||de>weekDayEnd)weekDayEnd=de;
+                });
+                if(weekDayStart!==null&&weekDayEnd!==null){
+                    const hasTestDay=weekSessions.some(s=>s.isWeeklyTest);
+                    if(hasTestDay){
+                        const adminRec={score:0,bestScore:0,passed:true,attempts:1,lastAttempt:new Date().toISOString(),adminCompleted:true,skipped:true,history:[{score:0,passed:true,date:Date.now(),admin:true,skipped:true}]};
+                        const wk=vocabDeckId+'/'+weekDayStart+'_'+weekDayEnd;
+                        // 주간훈련
+                        const wTrainKey='rl_vc_weeklyexam_train';
+                        const wTrainAll=JSON.parse(RL_STORE.get(wTrainKey)||'{}');
+                        if(!wTrainAll[wk])wTrainAll[wk]={...adminRec,deckId:vocabDeckId,weekDayStart,weekDayEnd};
+                        RL_STORE.set(wTrainKey,JSON.stringify(wTrainAll));
+                        // 주간실전
+                        const wExamKey='rl_vc_weeklyexam_exam';
+                        const wExamAll=JSON.parse(RL_STORE.get(wExamKey)||'{}');
+                        if(!wExamAll[wk])wExamAll[wk]={...adminRec,deckId:vocabDeckId,weekDayStart,weekDayEnd};
+                        RL_STORE.set(wExamKey,JSON.stringify(wExamAll));
+                        processed+=2;
+                    }
+                }
+            }
+        }
+    }catch(e){errors.push('단어 주간평가: '+e.message);}
     
     // 화면에 보이는 [완료] 버튼도 추가로 처리 (문법 주간 등 위에서 못 잡은 케이스 보강)
     const buttons=Array.from(document.querySelectorAll('.admin-done-btn'));
