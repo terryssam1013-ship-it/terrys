@@ -176,6 +176,9 @@ function _fmtBlockHour(h){
 }
 
 async function login(){
+    // 자동 로그인 마커 클리어 (사용자가 직접 로그인 = 정상 흐름)
+    try{ sessionStorage.removeItem('_auto_login_at'); }catch(e){}
+    
     const uid=document.getElementById('uid').value.trim();
     const pwd=document.getElementById('pwd').value;
     const users=JSON.parse(RL_STORE.get('rl_users')||'{}');
@@ -255,10 +258,11 @@ async function bootstrap(){
     
     initData();
     
-    // 무한 리다이렉트 방지 — 1초 내 자동 로그인 직후 다시 login에 왔으면 자동 로그인 중단
+    // 무한 리다이렉트 방지 — 5초 내 자동 로그인 직후 다시 login에 왔으면 자동 로그인 중단
+    // (느린 네트워크에서도 충분히 감지)
     const lastAutoLogin = parseInt(sessionStorage.getItem('_auto_login_at')||'0');
     const now = Date.now();
-    if(lastAutoLogin && (now - lastAutoLogin) < 2000){
+    if(lastAutoLogin && (now - lastAutoLogin) < 5000){
         console.warn('⚠️ 자동 로그인 직후 다시 login으로 돌아왔습니다. 무한 루프 방지를 위해 수동 로그인 필요');
         sessionStorage.removeItem('_auto_login_at');
         // 잔존 세션 정리 (안전장치)
@@ -271,10 +275,29 @@ async function bootstrap(){
     if(c){
         try{
             const u=JSON.parse(c);
-            // 자동 로그인 시간 기록 (다음 페이지에서 다시 login.html로 돌아오면 감지)
-            sessionStorage.setItem('_auto_login_at', String(now));
-            if(u.role==='admin')window.location.href='admin.html';
-            else window.location.href='student.html';
+            // 🛡️ 사용자가 입력 필드를 터치하면 자동 로그인 취소 (화면 떨림 방지)
+            //    QR 로그인 시 학생이 손가락으로 아이디 칸을 누르려는 순간 자동 리다이렉트가
+            //    발생하면 페이지가 깜박이며 입력이 안 되는 문제 해결
+            let autoLoginCancelled = false;
+            const cancelHandler = () => { autoLoginCancelled = true; };
+            const uidInput = document.getElementById('uid');
+            const pwdInput = document.getElementById('pwd');
+            ['focus','touchstart','mousedown','keydown'].forEach(evt => {
+                if(uidInput) uidInput.addEventListener(evt, cancelHandler, {once:true, passive:true});
+                if(pwdInput) pwdInput.addEventListener(evt, cancelHandler, {once:true, passive:true});
+            });
+            
+            // 500ms 짧은 지연: 사용자가 화면 만질 시간 확보 + 페이지 안정화
+            setTimeout(() => {
+                if(autoLoginCancelled){
+                    console.log('사용자 입력 감지 — 자동 로그인 취소');
+                    return;
+                }
+                // 자동 로그인 시간 기록 (다음 페이지에서 다시 login.html로 돌아오면 감지)
+                sessionStorage.setItem('_auto_login_at', String(Date.now()));
+                if(u.role==='admin')window.location.href='admin.html';
+                else window.location.href='student.html';
+            }, 500);
         }catch(e){
             console.error('rl_current_user 파싱 실패:',e);
             // 손상된 데이터 정리
@@ -284,13 +307,6 @@ async function bootstrap(){
     }
 }
 window.addEventListener('DOMContentLoaded',bootstrap);
-
-// 수동 로그인 성공 시 자동 로그인 마커 클리어 (정상 흐름)
-const originalLogin = login;
-login = function(){
-    sessionStorage.removeItem('_auto_login_at');
-    originalLogin();
-};
 </script>
 <script src="pwa-init.js"></script>
 </body>
