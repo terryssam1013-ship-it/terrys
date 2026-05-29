@@ -555,6 +555,62 @@ async function _syncFlushPush(){
 })();
 
 // Firebase에서 학생 진도 받아와 로컬에 적용
+// ★ 리셋 신호 체크 — 어드민이 [전체 일괄 취소] 누른 학생인지 확인
+// Firebase /student_reset_signals/<sid>에 새 신호가 있으면 IndexedDB+localStorage 자체 정리
+// 처리한 신호는 localStorage 'rl_reset_ack_ts'에 기록해 같은 신호를 재처리하지 않음
+async function checkResetSignal(sid){
+    try{
+        const url = SYNC_FB_URL + '/student_reset_signals/' + encodeURIComponent(sid) + '.json?_t=' + Date.now();
+        const r = await fetch(url, {cache:'no-store'});
+        if(!r.ok) return false;
+        const signal = await r.json();
+        if(!signal || !signal.ts) return false;
+        
+        // 이미 처리한 신호인지 확인
+        const ackTs = parseInt(localStorage.getItem('rl_reset_ack_ts')||'0', 10);
+        if(signal.ts <= ackTs) return false;
+        
+        console.log('🚨 [리셋 신호 감지] 어드민이 데이터 리셋 요청. 학생 로컬 데이터 자체 정리합니다.', signal);
+        
+        // 학습 키만 정리 (로그인 정보, 시스템 키는 유지)
+        const KILL_PREFIXES = ['rl_vc_', 'rl_gr_', 'rl_gichul_history_', 'rl_inprog_', 'rl_trtype_', 'rl_train_', 'rl_done_', 'rl_weekly_', 'rl_assess_', 'rl_skip_history_', 'rl_vocab_progress_', 'rl_vocab_game_'];
+        const KILL_EXACT = ['rl_active_week'];
+        
+        const allKeys = new Set();
+        for(let i=0; i<localStorage.length; i++){
+            const k = localStorage.key(i);
+            if(k) allKeys.add(k);
+        }
+        if(window.RLStorage && RLStorage.isReady()){
+            try{ RLStorage.keys().forEach(k=>allKeys.add(k)); }catch(e){}
+        }
+        
+        let deleted = 0;
+        allKeys.forEach(k=>{
+            const shouldKill = KILL_EXACT.includes(k) || KILL_PREFIXES.some(p=>k.startsWith(p));
+            if(shouldKill){
+                try{ localStorage.removeItem(k); }catch(e){}
+                if(window.RLStorage && RLStorage.isReady()){
+                    try{ RLStorage.removeItem(k); }catch(e){}
+                }
+                deleted++;
+            }
+        });
+        if(window.RLStorage && RLStorage.flush){
+            try{ await RLStorage.flush(); }catch(e){}
+        }
+        
+        // 신호 처리 완료 마커 — 같은 신호 재처리 방지
+        localStorage.setItem('rl_reset_ack_ts', String(signal.ts));
+        
+        console.log('✓ 학생 로컬 정리 완료, 삭제된 키:', deleted);
+        return true; // 리셋이 실제로 일어났음
+    }catch(e){
+        console.warn('리셋 신호 체크 실패:', e);
+        return false;
+    }
+}
+
 async function syncDownStudentState(){
     const sid = _syncGetStudentId();
     if(!sid){
@@ -562,6 +618,11 @@ async function syncDownStudentState(){
         return;
     }
     _lastSyncDownTime = Date.now();
+    
+    // ★ syncDown 전에 리셋 신호 체크. 신호 있으면 로컬 데이터 먼저 정리.
+    //    그 후 Firebase에서 받는 데이터(통상 없음 — 어드민이 같이 삭제했으므로)로 시작.
+    try{ await checkResetSignal(sid); }catch(e){ console.warn('checkResetSignal 실패:', e); }
+    
     try{
         const url = SYNC_FB_URL + '/student_state/' + encodeURIComponent(sid) + '.json?_t=' + Date.now();
         const r = await fetch(url, {cache:'no-store'});

@@ -5148,22 +5148,49 @@ function undoAdminCompletion(studentId){
         console.log('✓ active_week 초기화 — 1주차로 복귀');
     }catch(e){}
     
-    // ★★★ Firebase 학생 데이터 정리 — 학생 폰에서 잘못된 0점이 계속 보이는 문제 해결 ★★★
-    // 어드민 PC 데이터만 삭제하면 학생 폰은 Firebase에서 다시 다운로드해 잘못된 데이터 복원됨.
-    // /student_state/<studentId>/ 경로의 학습 키들을 Firebase에서 직접 삭제.
+    // ★★★ 강력 리셋: Firebase 학생 데이터 통째 삭제 + 학생 폰에 리셋 신호 발송 ★★★
+    // 옛 방식 (부분 정리)은 학생 폰의 IndexedDB에 남은 데이터가 다시 Firebase로 푸시되며 
+    // 잘못된 데이터가 살아나는 문제가 있었음. 이제는:
+    //   1) Firebase /student_state/<sid>/ 통째 삭제 (DELETE)
+    //   2) /student_reset_signals/<sid> 에 신호 등록 (학생 폰이 다음 부팅 시 자기 데이터도 통째 삭제)
     const FB_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
-    cleanupFirebaseAdminData(studentId, FB_URL, toDelete, toUpdate)
-        .then(fbResult => {
-            console.log('✓ Firebase 정리 완료:', fbResult);
+    const resetTs = Date.now();
+    fullResetStudent(studentId, FB_URL, resetTs)
+        .then(result => {
+            console.log('✓ 학생 강력 리셋 완료:', result);
         })
         .catch(err => {
-            console.warn('Firebase 정리 일부 실패 (학생이 폰에서 새로고침 후 동기화 시 자동 처리됨):', err);
+            console.warn('Firebase 리셋 일부 실패 (학생이 폰에서 새로고침 시 자동 처리됨):', err);
         });
     
-    alert(`✅ 어드민 완료 처리가 취소되었습니다.\n• 삭제된 키: ${deleted}개\n• 정리된 객체: ${updated}개\n• Firebase 학생 데이터도 정리됨 (학생 폰 새로고침 시 반영)\n\nF12 콘솔에서 상세 로그 확인 가능합니다.`);
+    alert(`✅ 어드민 완료 처리가 취소되었습니다.\n• 삭제된 키: ${deleted}개\n• 정리된 객체: ${updated}개\n• Firebase 학생 데이터 통째 삭제됨\n• 학생 폰에 리셋 신호 발송 (다음 새로고침 시 자동 정리)\n\n💡 학생에게 "사이트 새로고침해" 한 마디만 하시면 폰이 자동으로 정리됩니다.`);
     
     closeResetModal();
     render();
+}
+
+// 학생 강력 리셋 — Firebase 학생 데이터 통째 삭제 + 리셋 신호 발송
+// 학생 폰이 다음 부팅 시 신호를 감지하면 자기 IndexedDB+localStorage를 자동 정리함
+async function fullResetStudent(studentId, fbUrl, resetTs){
+    const sidEnc = encodeURIComponent(studentId);
+    
+    // 1) Firebase 학생 학습 데이터 통째 삭제
+    const dataPath = fbUrl + '/student_state/' + sidEnc + '.json';
+    const delRes = await fetch(dataPath, {method: 'DELETE'});
+    
+    // 2) 리셋 신호 등록 — 학생 폰이 부팅 때 체크
+    const signalPath = fbUrl + '/student_reset_signals/' + sidEnc + '.json';
+    const sigRes = await fetch(signalPath, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ts: resetTs, reason: 'admin_reset'})
+    });
+    
+    return {
+        dataDeleted: delRes.ok,
+        signalRegistered: sigRes.ok,
+        ts: resetTs
+    };
 }
 
 // Firebase에서 학생의 adminCompleted 데이터 정리
