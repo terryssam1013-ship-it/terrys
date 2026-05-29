@@ -2292,70 +2292,173 @@ function executeSkipWeek(){
     const reason=reasonEl?(reasonEl.value||'').trim():'';
     closeSkipWeekModal();
     
-    // 1) 화면의 모든 [완료] 버튼 클릭 — _noRender 옵션 없이 호출되는 게 대부분이라
-    //    한 번에 다 클릭하면 매 클릭마다 render() 호출돼서 버튼이 사라짐
-    //    → onclick 코드를 직접 추출해서 eval로 실행 (단, render는 마지막에 한 번)
-    const buttons=Array.from(document.querySelectorAll('.admin-done-btn'));
-    let processed=0;
-    const actions=[];
+    // ════════════════════════════════════════════════════════════════
+    // 핵심 전략: 화면 [완료] 버튼이 아니라, 학습 일정 데이터를 직접 읽어
+    //          이번 주의 모든 학습일/평가일에 대해 리딩·문법·단어 전 카테고리
+    //          훈련+실전을 강제 통과 처리. (잠금 상태로 [완료] 버튼이 안 보여도 처리됨)
+    //          → 다음 주 첫 학습일 진입 시 canLearn 체크 모두 통과
+    // ════════════════════════════════════════════════════════════════
     
-    // adminComplete*** 함수 호출 정보 모으기
-    buttons.forEach(btn=>{
-        const onclickStr=btn.getAttribute('onclick')||'';
-        // event.stopPropagation();adminCompleteXxx(...) 또는 adminCompleteXxx(...)
-        // 정규식으로 함수명과 인자 추출
-        const m=onclickStr.match(/adminComplete\w+\([^)]*\)/);
-        if(m)actions.push(m[0]);
+    const sd=getStudentData()||{};
+    if(!sd){alert('학생 정보를 찾을 수 없습니다');return;}
+    
+    // 이번 주 시작/끝 계산 (현재 활성 주차)
+    const awKey='rl_active_week';
+    const startDate=sd.startDate?new Date(sd.startDate+'T00:00:00'):new Date();
+    const storedAW=RL_STORE.get(awKey);
+    let weekStart=storedAW?new Date(storedAW+'T00:00:00'):getWeekMonday(startDate<=new Date()?startDate:new Date());
+    weekStart=getWeekMonday(weekStart);
+    weekStart.setHours(0,0,0,0);
+    const weekEnd=addDays(weekStart,6);
+    
+    // 이번 주에 해당하는 학습일/평가일 세션 추출
+    let allSessions=[];
+    try{allSessions=buildAllSessions(sd,addDays(weekEnd,1));}catch(e){console.warn('buildAllSessions 실패:',e);}
+    const weekSessions=allSessions.filter(s=>{
+        const d=s.date;
+        return d>=weekStart&&d<=weekEnd;
     });
     
-    // 중복 제거 (같은 항목에 대해 여러 버튼이 있을 수 있음)
-    const uniqueActions=[...new Set(actions)];
-    
-    if(uniqueActions.length===0){
-        alert('처리할 항목을 찾지 못했습니다.');
+    if(weekSessions.length===0){
+        alert('이번 주에 학습일이 없습니다. (수업 요일이 설정되지 않았을 수 있어요.)');
         return;
     }
     
-    // 실행 — 각 함수가 render()를 부르지만 마지막에 정리됨
-    uniqueActions.forEach(action=>{
-        try{
-            // eval 대신 더 안전한 Function 호출
-            new Function(action)();
-            processed++;
-        }catch(e){
-            console.warn('Skip-week action failed:',action,e);
+    // 카테고리별 데이터 준비
+    const bookName=sd.textbooks?.reading;
+    const ba=(getArticles()||{})[bookName]||{};
+    const startUnit=parseInt(sd.startUnit)||1;
+    const vocabDeckId=sd.textbooks?.vocab;
+    const vocabHomeworkPerDay=Math.max(1,parseInt(sd.vocabHomeworkPerDay)||1);
+    const vocabStartDay=Math.max(1,parseInt(sd.startVocabDay)||1);
+    const vocabStartDateStr=sd.startVocabDate;
+    const vocabStartDate=vocabStartDateStr?new Date(vocabStartDateStr+'T00:00:00'):null;
+    const grStart=parseInt(sd.startGrammarPoint)||1;
+    const grStartDateStr=sd.startGrammarDate;
+    const grStartDate=grStartDateStr?new Date(grStartDateStr+'T00:00:00'):null;
+    
+    let processed=0;
+    const errors=[];
+    
+    // 학습일 → 리딩/문법/단어 훈련+실전 처리
+    // 평가일 → 리딩/문법 주간 + 단어 주간 처리
+    weekSessions.forEach(sess=>{
+        if(sess.isWeeklyTest){
+            // 평가일 — 주간 항목 처리
+            // 이 평가일이 속한 주의 weekId 계산 (riding 주간평가용)
+            const weekId=fmtDateISO(getWeekMonday(sess.date));
+            try{ adminCompleteReadingWeekly(weekId,'train',true); processed++; }catch(e){errors.push('리딩 주간훈련: '+e.message);}
+            try{ adminCompleteReadingWeekly(weekId,'exam',true); processed++; }catch(e){errors.push('리딩 주간실전: '+e.message);}
+            
+            // 문법 주간 — wIdx (몇 주차)는 학생 시작일 기준으로 계산
+            // wFrom/wTo는 이번 주 학습 Point 범위 (간단하게 grStart 기반으로 추정 — 정확도 미흡 시 다음 단계에서 조정)
+            // 사실 학습일정에서 자동 계산되니, 우선 화면 [완료] 버튼이 있으면 그걸로
+            // 없으면 grammarweekly는 못 처리 (학생이 다음 주 시작 시 자동 unlock 가능)
+        }else{
+            // 학습일 — 리딩/문법/단어 처리
+            const dayIdx=allSessions.filter(as=>!as.isWeeklyTest&&as.date<sess.date).length;
+            
+            // 리딩
+            const readingUnit=startUnit+dayIdx;
+            const uk='unit'+readingUnit;
+            if(ba[uk]&&(ba[uk].articles||[]).length>0){
+                try{ adminCompleteReadingTrain(uk,true); processed++; }catch(e){errors.push('리딩 훈련 '+uk+': '+e.message);}
+                try{ adminCompleteReadingExam(uk,true); processed++; }catch(e){errors.push('리딩 실전 '+uk+': '+e.message);}
+            }
+            
+            // 문법 — 시작일 이후면 처리
+            const grammarActive=!grStartDate||sess.date>=grStartDate;
+            if(grammarActive){
+                // 이 학습일의 unit 번호 계산
+                let grLessonIdx=0;
+                for(let j=0;j<allSessions.length;j++){
+                    const as=allSessions[j];
+                    if(as.isWeeklyTest)continue;
+                    if(grStartDate&&as.date<grStartDate)continue;
+                    if(as.date.getTime()===sess.date.getTime())break;
+                    grLessonIdx++;
+                }
+                const startUnitG=Math.floor((grStart-1)/4)+1;
+                const rowUnit=startUnitG+grLessonIdx;
+                try{ adminCompleteGrammarTrain(rowUnit,true); processed++; }catch(e){errors.push('문법 훈련 U'+rowUnit+': '+e.message);}
+                try{ adminCompleteGrammarExam(rowUnit,true); processed++; }catch(e){errors.push('문법 실전 U'+rowUnit+': '+e.message);}
+            }
+            
+            // 단어 — 시작일 이후면 처리
+            if(vocabDeckId){
+                const vocabActive=!vocabStartDate||sess.date>=vocabStartDate;
+                if(vocabActive){
+                    const vIdx=LS.g('vocab_index')||{};
+                    const deck=vIdx[vocabDeckId];
+                    if(deck&&(deck.days||[]).length>0){
+                        // 이 학습일의 dayStart 계산
+                        let vLessonIdx=0;
+                        for(let j=0;j<allSessions.length;j++){
+                            const as=allSessions[j];
+                            if(as.isWeeklyTest)continue;
+                            if(vocabStartDate&&as.date<vocabStartDate)continue;
+                            if(as.date.getTime()===sess.date.getTime())break;
+                            vLessonIdx++;
+                        }
+                        const dayStart=vocabStartDay+vLessonIdx*vocabHomeworkPerDay;
+                        const totalDays=(deck.days||[]).length;
+                        if(dayStart<=totalDays){
+                            try{ adminCompleteVocabTrain(vocabDeckId,dayStart,vocabHomeworkPerDay,true); processed++; }catch(e){errors.push('단어 훈련 DAY'+dayStart+': '+e.message);}
+                            try{ adminCompleteVocabExam(vocabDeckId,dayStart,vocabHomeworkPerDay,true); processed++; }catch(e){errors.push('단어 실전 DAY'+dayStart+': '+e.message);}
+                        }
+                    }
+                }
+            }
         }
     });
     
-    // 2) 사유 기록 — 학생별 skip 이력 저장 (학생 미리보기 sid 기준)
+    // 화면에 보이는 [완료] 버튼도 추가로 처리 (문법 주간 등 위에서 못 잡은 케이스 보강)
+    const buttons=Array.from(document.querySelectorAll('.admin-done-btn'));
+    const actions=[];
+    buttons.forEach(btn=>{
+        const onclickStr=btn.getAttribute('onclick')||'';
+        const m=onclickStr.match(/adminComplete\w+\([^)]*\)/);
+        if(m){
+            // _noRender 인자 추가 (마지막에 한 번만 render)
+            let action=m[0];
+            if(!action.includes('true)')&&!action.includes(',true')){
+                action=action.replace(/\)$/,',true)');
+            }
+            actions.push(action);
+        }
+    });
+    const uniqueActions=[...new Set(actions)];
+    uniqueActions.forEach(action=>{
+        try{ new Function(action)(); processed++; }catch(e){}
+    });
+    
+    // 사유 기록
     if(reason){
         const sid=getPreviewId();
         if(sid){
             const histKey='rl_skip_history_'+sid;
             let hist=[];
             try{hist=JSON.parse(RL_STORE.get(histKey)||'[]');}catch(e){}
-            const awKey='rl_active_week';
-            const stored=RL_STORE.get(awKey);
             hist.push({
                 date:new Date().toISOString(),
-                weekStart:stored||fmtDateISO(getWeekMonday(new Date())),
+                weekStart:fmtDateISO(weekStart),
                 reason:reason,
-                itemCount:processed,
-                actions:uniqueActions
+                itemCount:processed
             });
             RL_STORE.set(histKey,JSON.stringify(hist));
         }
     }
     
-    // 3) 다음 주로 이동
+    // 다음 주로 이동
     setTimeout(()=>{
         advanceWeek();
-        // 4) 완료 알림 (간단한 토스트)
         const toast=document.createElement('div');
-        toast.style.cssText='position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#10B981;color:#fff;padding:12px 24px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 12px rgba(16,185,129,.3);z-index:99999;animation:fadeIn .3s';
-        toast.textContent=`✓ ${processed}개 항목 처리 완료. 다음 주로 이동했습니다.`;
+        toast.style.cssText='position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#10B981;color:#fff;padding:12px 24px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 12px rgba(16,185,129,.3);z-index:99999';
+        const errMsg=errors.length>0?` (오류 ${errors.length}건은 콘솔 참조)`:'';
+        toast.textContent=`✓ ${processed}개 항목 처리 완료${errMsg}. 다음 주로 이동했습니다.`;
         document.body.appendChild(toast);
-        setTimeout(()=>toast.remove(),3500);
+        setTimeout(()=>toast.remove(),4000);
+        if(errors.length>0)console.warn('Skip-week errors:',errors);
     },100);
 }
 
