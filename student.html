@@ -430,6 +430,7 @@ function _syncKeyType(k){
     if(/^rl_done_/.test(k)) return 'uid-prefixed';
     if(/^rl_weekly_/.test(k)) return 'uid-prefixed';
     if(/^rl_assess_/.test(k)) return 'uid-prefixed';
+    if(/^rl_skip_history_/.test(k)) return 'uid-prefixed';
     // 단어 학습 키들 (rl_vc_*, rl_vocab_*): 값이 {deckId/dayId: 데이터} 구조 = 학생 본인 데이터
     //   → 통째로 동기화 (uid-prefixed처럼). 단, 한 기기에 한 학생만 로그인하므로 안전.
     //   ⚠️ 이 키들은 학생별 분리가 안 돼 있으므로, 학원 공용 기기 사용 시
@@ -445,6 +446,13 @@ function _syncKeyType(k){
 
 function _syncGetStudentId(){
     try{
+        // 어드민 미리보기 모드: URL의 preview ID를 sid로 사용
+        // → 어드민이 [완료] 등 학생 데이터 변경 시 학생의 Firebase 슬롯에 직접 푸시
+        // (그래야 학생 본인 폰에서 syncDown 시 받아감)
+        if(typeof getPreviewId === 'function'){
+            const pid = getPreviewId();
+            if(pid) return pid;
+        }
         const raw = RL_STORE.get('rl_current_user');
         if(!raw) return null;
         const u = JSON.parse(raw);
@@ -2169,11 +2177,20 @@ function renderSchedule(s){
                 <div style="font-size:12px;color:var(--text3);margin-top:8px">이번 주 학습 완료! 다음 주 일정으로 넘어갑니다</div>
             </div>`;
         } else {
+            // 미완료 — 어드민 미리보기면 "이번 주 미완료 일괄 처리 후 넘기기" 버튼 추가
+            const adminSkipBtn=isPreview()?`
+                <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #E5E7EB">
+                    <button onclick="openSkipWeekModal()" style="background:#F59E0B;color:#fff;border:none;border-radius:10px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(245,158,11,.3)">
+                        ⏭ 이번 주 미완료 처리 후 넘기기 (관리자)
+                    </button>
+                    <div style="font-size:11px;color:var(--text3);margin-top:6px">결석·시험기간 등으로 한 주 못 한 경우 사용 — 학생 폰에도 자동 반영</div>
+                </div>`:'';
             return `<div style="text-align:center;margin-top:20px">
                 <button disabled style="background:#9CA3AF;color:#fff;border:none;border-radius:12px;padding:14px 32px;font-size:15px;font-weight:700;cursor:default;opacity:0.5">
                     🔒 Next Week
                 </button>
                 <div style="font-size:12px;color:var(--text3);margin-top:8px">이번 주 리딩·문법·단어 학습을 모두 완료하면 열립니다</div>
+                ${adminSkipBtn}
             </div>`;
         }
     })():''}
@@ -2195,6 +2212,151 @@ function advanceWeek(){
     const next=addDays(current,7);
     RL_STORE.set(awKey,fmtDateISO(next));
     render();
+}
+
+// ════════════════════════════════════════════════════════════════
+// ⏭ 어드민 미리보기 — "이번 주 미완료 일괄 처리 후 다음 주로"
+// ════════════════════════════════════════════════════════════════
+// 결석·시험기간 등으로 한 주 학습을 못 한 학생을 다음 주로 그냥 보내는 기능
+// 화면에 표시된 [완료] 버튼들을 자동으로 모두 클릭 → 마지막에 advanceWeek()
+// 학생 폰에도 자동 동기화 (Firebase syncUp 시스템이 미리보기 sid로 push)
+//
+// 사용 흐름:
+//   1. 어드민이 학생 미리보기 진입 → 학습일정 탭
+//   2. 미완료 항목이 있어서 "🔒 Next Week" 잠긴 상태
+//   3. "⏭ 이번 주 미완료 처리 후 넘기기" 클릭
+//   4. 확인 모달 → 사유 입력 (선택) → 처리
+//   5. 모든 [완료] 자동 클릭 → 다음 주로 이동 → Firebase 동기화
+function openSkipWeekModal(){
+    if(!isPreview()){alert('미리보기 모드에서만 사용 가능합니다');return;}
+    // 화면의 [완료] 버튼 개수 세기 — 사용자에게 미리 보여주기
+    const buttons=document.querySelectorAll('.admin-done-btn');
+    const cnt=buttons.length;
+    if(cnt===0){
+        alert('이번 주에 미완료 항목이 없습니다. 일반 Next Week 버튼을 사용하세요.');
+        return;
+    }
+    
+    // 카테고리별 카운트 (어떤 항목이 미완료인지 시각화)
+    const cats={리딩:0,문법:0,단어:0,기타:0};
+    buttons.forEach(b=>{
+        const txt=(b.getAttribute('onclick')||'').toLowerCase();
+        if(txt.includes('reading'))cats.리딩++;
+        else if(txt.includes('grammar'))cats.문법++;
+        else if(txt.includes('vocab')||txt.includes('weekly'))cats.단어++;
+        else cats.기타++;
+    });
+    const catList=Object.entries(cats).filter(([k,v])=>v>0).map(([k,v])=>`• ${k}: ${v}개`).join('<br>');
+    
+    // 모달 띄우기
+    const existing=document.getElementById('skipWeekModal');
+    if(existing)existing.remove();
+    const modal=document.createElement('div');
+    modal.id='skipWeekModal';
+    modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.onclick=function(e){if(e.target===this)closeSkipWeekModal();};
+    modal.innerHTML=`
+        <div style="background:#fff;border-radius:16px;padding:24px;max-width:480px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,0.3)" onclick="event.stopPropagation()">
+            <div style="font-size:18px;font-weight:800;margin-bottom:14px;color:#92400E;display:flex;align-items:center;gap:8px">
+                ⚠️ 이번 주 미완료 처리 + 다음 주로 이동
+            </div>
+            <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:14px;margin-bottom:14px;font-size:13px;line-height:1.7;color:#78350F">
+                <strong>미완료 항목 ${cnt}개:</strong><br>${catList}
+            </div>
+            <div style="font-size:13px;color:#374151;margin-bottom:14px;line-height:1.6">
+                위 항목들을 <b>"관리자 통과"</b>로 처리하고 다음 주 일정으로 넘어갑니다.<br>
+                <span style="color:#10B981;font-weight:600">✓ 학생 폰에도 자동 반영됩니다</span> (다음 새로고침 시)
+            </div>
+            <div style="margin-bottom:18px">
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#1F2937">사유 (선택)</label>
+                <textarea id="skipWeekReason" rows="2" placeholder="예: 학생 결석, 시험 기간, 가족 행사 등" style="width:100%;padding:10px 12px;border:1px solid #D1D5DB;border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:4px">기록되어 나중에 학습 기록 페이지에서 확인 가능합니다</div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button onclick="closeSkipWeekModal()" style="background:#F3F4F6;color:#374151;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">취소</button>
+                <button onclick="executeSkipWeek()" style="background:#F59E0B;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer">⏭ 처리하고 다음 주로</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+function closeSkipWeekModal(){
+    const m=document.getElementById('skipWeekModal');
+    if(m)m.remove();
+}
+
+function executeSkipWeek(){
+    if(!isPreview()){alert('미리보기 모드에서만 사용 가능합니다');return;}
+    const reasonEl=document.getElementById('skipWeekReason');
+    const reason=reasonEl?(reasonEl.value||'').trim():'';
+    closeSkipWeekModal();
+    
+    // 1) 화면의 모든 [완료] 버튼 클릭 — _noRender 옵션 없이 호출되는 게 대부분이라
+    //    한 번에 다 클릭하면 매 클릭마다 render() 호출돼서 버튼이 사라짐
+    //    → onclick 코드를 직접 추출해서 eval로 실행 (단, render는 마지막에 한 번)
+    const buttons=Array.from(document.querySelectorAll('.admin-done-btn'));
+    let processed=0;
+    const actions=[];
+    
+    // adminComplete*** 함수 호출 정보 모으기
+    buttons.forEach(btn=>{
+        const onclickStr=btn.getAttribute('onclick')||'';
+        // event.stopPropagation();adminCompleteXxx(...) 또는 adminCompleteXxx(...)
+        // 정규식으로 함수명과 인자 추출
+        const m=onclickStr.match(/adminComplete\w+\([^)]*\)/);
+        if(m)actions.push(m[0]);
+    });
+    
+    // 중복 제거 (같은 항목에 대해 여러 버튼이 있을 수 있음)
+    const uniqueActions=[...new Set(actions)];
+    
+    if(uniqueActions.length===0){
+        alert('처리할 항목을 찾지 못했습니다.');
+        return;
+    }
+    
+    // 실행 — 각 함수가 render()를 부르지만 마지막에 정리됨
+    uniqueActions.forEach(action=>{
+        try{
+            // eval 대신 더 안전한 Function 호출
+            new Function(action)();
+            processed++;
+        }catch(e){
+            console.warn('Skip-week action failed:',action,e);
+        }
+    });
+    
+    // 2) 사유 기록 — 학생별 skip 이력 저장 (학생 미리보기 sid 기준)
+    if(reason){
+        const sid=getPreviewId();
+        if(sid){
+            const histKey='rl_skip_history_'+sid;
+            let hist=[];
+            try{hist=JSON.parse(RL_STORE.get(histKey)||'[]');}catch(e){}
+            const awKey='rl_active_week';
+            const stored=RL_STORE.get(awKey);
+            hist.push({
+                date:new Date().toISOString(),
+                weekStart:stored||fmtDateISO(getWeekMonday(new Date())),
+                reason:reason,
+                itemCount:processed,
+                actions:uniqueActions
+            });
+            RL_STORE.set(histKey,JSON.stringify(hist));
+        }
+    }
+    
+    // 3) 다음 주로 이동
+    setTimeout(()=>{
+        advanceWeek();
+        // 4) 완료 알림 (간단한 토스트)
+        const toast=document.createElement('div');
+        toast.style.cssText='position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#10B981;color:#fff;padding:12px 24px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 12px rgba(16,185,129,.3);z-index:99999;animation:fadeIn .3s';
+        toast.textContent=`✓ ${processed}개 항목 처리 완료. 다음 주로 이동했습니다.`;
+        document.body.appendChild(toast);
+        setTimeout(()=>toast.remove(),3500);
+    },100);
 }
 
 // 월간일정 렌더링 (renderSchedule과 동일하지만 월 단위)
