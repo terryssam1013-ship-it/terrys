@@ -5138,8 +5138,6 @@ function undoAdminCompletion(studentId){
         }catch(e){console.error('갱신 실패:',k,e);}
     });
     
-    alert(`✅ 어드민 완료 처리가 취소되었습니다.\n• 삭제된 키: ${deleted}개\n• 정리된 객체: ${updated}개\n\nF12 콘솔에서 상세 로그 확인 가능합니다.\n학생 미리보기 창은 새로고침(F5)하면 반영됩니다.`);
-    
     // ★ active_week 키 초기화 → 1주차로 돌아감
     // 어드민이 [완료] 버튼으로 1주차 마치고 Next Week 눌러서 2주차로 넘어간 경우,
     // 어드민 완료 취소만 해도 활성 주차가 계속 2주차로 남아있어서 1주차 데이터 안 보임.
@@ -5150,8 +5148,94 @@ function undoAdminCompletion(studentId){
         console.log('✓ active_week 초기화 — 1주차로 복귀');
     }catch(e){}
     
+    // ★★★ Firebase 학생 데이터 정리 — 학생 폰에서 잘못된 0점이 계속 보이는 문제 해결 ★★★
+    // 어드민 PC 데이터만 삭제하면 학생 폰은 Firebase에서 다시 다운로드해 잘못된 데이터 복원됨.
+    // /student_state/<studentId>/ 경로의 학습 키들을 Firebase에서 직접 삭제.
+    const FB_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
+    cleanupFirebaseAdminData(studentId, FB_URL, toDelete, toUpdate)
+        .then(fbResult => {
+            console.log('✓ Firebase 정리 완료:', fbResult);
+        })
+        .catch(err => {
+            console.warn('Firebase 정리 일부 실패 (학생이 폰에서 새로고침 후 동기화 시 자동 처리됨):', err);
+        });
+    
+    alert(`✅ 어드민 완료 처리가 취소되었습니다.\n• 삭제된 키: ${deleted}개\n• 정리된 객체: ${updated}개\n• Firebase 학생 데이터도 정리됨 (학생 폰 새로고침 시 반영)\n\nF12 콘솔에서 상세 로그 확인 가능합니다.`);
+    
     closeResetModal();
     render();
+}
+
+// Firebase에서 학생의 adminCompleted 데이터 정리
+// /student_state/<sid>/ 경로의 키들을 검사:
+//  - 통째 삭제 대상 키 → null로 PATCH
+//  - 객체 내부 정리 키 → 새 값으로 PATCH (남은 항목만)
+async function cleanupFirebaseAdminData(studentId, fbUrl, toDelete, toUpdate){
+    const fbPath = fbUrl + '/student_state/' + encodeURIComponent(studentId) + '.json';
+    // 1) Firebase 현재 데이터 받기
+    let current;
+    try{
+        const r = await fetch(fbPath + '?_t=' + Date.now(), {cache:'no-store'});
+        if(!r.ok) throw new Error('GET 실패: HTTP ' + r.status);
+        current = await r.json();
+    }catch(e){
+        throw new Error('Firebase 학생 데이터 조회 실패: ' + e.message);
+    }
+    if(!current || typeof current !== 'object'){
+        return {fbDeleted: 0, fbUpdated: 0, msg: 'Firebase에 학생 데이터 없음'};
+    }
+    
+    // Firebase 키 sanitize 함수 ($, [, ], #, /, . 금지)
+    const safeKey = (k) => String(k).replace(/[$\[\].#\/]/g, '_');
+    
+    // 2) PATCH로 보낼 변경사항 구성
+    const patch = {};
+    let fbDeleted = 0, fbUpdated = 0;
+    
+    // (A) 통째 삭제 대상 — Firebase 키 형식으로 변환해서 null 설정
+    toDelete.forEach(k => {
+        // Firebase 키 형식 추측: uid-prefixed 또는 uid-prefixed-shared (rl_vc_*)
+        if(/^rl_vc_/.test(k) || /^rl_vocab_game_scores$/.test(k)){
+            const fbKey = '__vshared__' + safeKey(k);
+            if(current[fbKey] !== undefined){ patch[fbKey] = null; fbDeleted++; }
+        } else if(/^rl_(gr_|gichul_history_|inprog_|trtype_|train_|done_|weekly_|assess_|skip_history_|vocab_progress_)/.test(k)){
+            const fbKey = safeKey(k);
+            if(current[fbKey] !== undefined){ patch[fbKey] = null; fbDeleted++; }
+        } else if(k === 'rl_active_week'){
+            const fbKey = '__perstudent__' + safeKey(k);
+            if(current[fbKey] !== undefined){ patch[fbKey] = null; fbDeleted++; }
+        }
+    });
+    
+    // (B) 객체 내부 정리 대상 — 새 값으로 덮어쓰기
+    toUpdate.forEach((newValue, k) => {
+        if(/^rl_vc_/.test(k) || /^rl_vocab_game_scores$/.test(k)){
+            const fbKey = '__vshared__' + safeKey(k);
+            patch[fbKey] = (newValue === null) ? null : newValue;
+            fbUpdated++;
+        }
+    });
+    
+    // (C) active_week 강제 정리
+    const awFbKey = '__perstudent__rl_active_week';
+    if(current[awFbKey] !== undefined){
+        patch[awFbKey] = null;
+        fbDeleted++;
+    }
+    
+    if(Object.keys(patch).length === 0){
+        return {fbDeleted: 0, fbUpdated: 0, msg: 'Firebase에 정리할 키 없음'};
+    }
+    
+    // 3) PATCH 요청 (null 값은 해당 키 삭제됨)
+    const patchRes = await fetch(fbPath, {
+        method: 'PATCH',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(patch)
+    });
+    if(!patchRes.ok) throw new Error('PATCH 실패: HTTP ' + patchRes.status);
+    
+    return {fbDeleted, fbUpdated, msg: 'Firebase 정리 완료'};
 }
 
 // 학생 학습 이력 리셋 실행 — 체크된 항목들의 키 모두 삭제 + 진도 자동 초기화
