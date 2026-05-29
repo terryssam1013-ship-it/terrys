@@ -223,13 +223,14 @@ function render(){
     if(!user||user.role!=='admin'){window.location.href='login.html';return;}
     // 정상 로드 성공 — 자동 로그인 무한 루프 마커 클리어
     sessionStorage.removeItem('_auto_login_at');
+    // videos/publish 탭이 설정 sub-tab으로 이동됨 — 이전 상태에서 새로고침 시 자동 리다이렉트
+    if(currentTab==='videos'){ currentTab='settings'; settingsSubTab='videos'; }
+    if(currentTab==='publish'){ currentTab='settings'; settingsSubTab='publish'; }
     document.getElementById('app').innerHTML=renderNav()+`<div class="container">${
         currentTab==='students'?tabStudents():
         currentTab==='reading'?tabReading():
         currentTab==='grammar'?tabGrammar():
         currentTab==='vocab'?tabVocab():
-        currentTab==='videos'?tabVideos():
-        currentTab==='publish'?tabPublish():
         currentTab==='progress'?tabProgress():
         currentTab==='settings'?tabSettings():''
     }</div>`+(modal?renderModal():'');
@@ -242,8 +243,6 @@ function renderNav(){
         {id:'reading',label:'리딩'},
         {id:'grammar',label:'문법'},
         {id:'vocab',label:'단어'},
-        {id:'videos',label:'📺 영상'},
-        {id:'publish',label:'📦 배포'},
         {id:'progress',label:'현황'},
         {id:'settings',label:'설정'}
     ];
@@ -3338,7 +3337,10 @@ function tabSettings(){
     const subTabs=[
         {id:'reading',label:'📖 리딩 설정',color:'#3B82F6'},
         {id:'vocab',label:'📚 단어 설정',color:'#A855F7'},
-        {id:'grammar',label:'📝 문법 설정',color:'#10B981'}
+        {id:'grammar',label:'📝 문법 설정',color:'#10B981'},
+        {id:'videos',label:'📺 영상',color:'#EF4444'},
+        {id:'publish',label:'📦 배포',color:'#F59E0B'},
+        {id:'block',label:'🌙 잠금',color:'#1E293B'}
     ];
     const subTabMenu=`<div style="display:flex;gap:4px;margin:16px 0 22px;border-bottom:2px solid var(--border);padding-bottom:0">
         ${subTabs.map(t=>`<button onclick="settingsSubTab='${t.id}';render()" style="padding:10px 22px;background:${settingsSubTab===t.id?t.color:'transparent'};color:${settingsSubTab===t.id?'#fff':'var(--text2)'};border:none;border-radius:8px 8px 0 0;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;border-bottom:${settingsSubTab===t.id?'3px solid '+t.color:'3px solid transparent'};margin-bottom:-2px">${t.label}</button>`).join('')}
@@ -3352,6 +3354,59 @@ function tabSettings(){
             <div style="font-size:48px;margin-bottom:14px">🚧</div>
             <h3 style="font-size:18px;margin-bottom:8px;color:var(--text2)">문법 설정 준비 중</h3>
             <p style="font-size:13px;color:var(--text3);line-height:1.6">문법 학습 시스템 설정은 추후 추가될 예정입니다.<br>(통과점수, 캐릭터 변경 조건, 단계별 진행 조건 등)</p>
+        </div>`;
+    }
+    
+    // 📺 영상 sub-tab — 기존 tabVideos() 함수 재사용
+    if(settingsSubTab==='videos'){
+        return `${subTabMenu}<div style="margin-top:16px">${tabVideos()}</div>`;
+    }
+    
+    // 📦 배포 sub-tab — 기존 tabPublish() 함수 재사용
+    if(settingsSubTab==='publish'){
+        return `${subTabMenu}<div style="margin-top:16px">${tabPublish()}</div>`;
+    }
+    
+    // 🌙 잠금 설정 탭 — 야간 학습 차단
+    if(settingsSubTab==='block'){
+        const sb=getSettings().studyBlock||DEFAULT_SETTINGS.studyBlock;
+        return `<h2>설정 — 잠금</h2><div class="page-desc">학생의 야간 학습 시간대를 제한합니다 (관리자는 영향 없음)</div>
+        ${subTabMenu}
+        <div class="card">
+            <div style="background:linear-gradient(135deg,#1E293B,#334155);color:#fff;padding:18px 22px;border-radius:10px;margin-bottom:18px">
+                <div style="font-size:18px;font-weight:700;margin-bottom:6px">🌙 야간 학습 차단</div>
+                <div style="font-size:13px;opacity:0.9;line-height:1.6">설정한 시간대에는 학생이 로그인하거나 학습할 수 없습니다.<br>이미 로그인된 폰도 화면이 자동으로 잠깁니다.</div>
+            </div>
+            
+            <label style="display:flex;align-items:center;gap:12px;cursor:pointer;font-size:15px;padding:14px 18px;background:#F1F5F9;border:2px solid #E2E8F0;border-radius:10px;margin-bottom:18px">
+                <input type="checkbox" id="set-sb-enabled" ${sb.enabled?'checked':''} style="width:22px;height:22px;cursor:pointer">
+                <span style="font-weight:700">야간 학습 차단 사용하기</span>
+                <span style="margin-left:auto;font-size:12px;color:#64748B">체크 시 아래 시간대에 학생 접속 제한</span>
+            </label>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+                <div style="padding:14px;border:1px solid #E5E7EB;border-radius:10px">
+                    <label style="display:block;font-size:13px;font-weight:600;color:#1E293B;margin-bottom:8px">🌙 차단 시작 (밤)</label>
+                    <select id="set-sb-start" style="width:100%;padding:10px 12px;border:1px solid #D1D5DB;border-radius:8px;font-size:14px;background:#fff">
+                        ${Array.from({length:24},(_,h)=>`<option value="${h}" ${sb.startHour===h?'selected':''}>${_hourLabel(h)}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="padding:14px;border:1px solid #E5E7EB;border-radius:10px">
+                    <label style="display:block;font-size:13px;font-weight:600;color:#1E293B;margin-bottom:8px">☀️ 차단 종료 (아침)</label>
+                    <select id="set-sb-end" style="width:100%;padding:10px 12px;border:1px solid #D1D5DB;border-radius:8px;font-size:14px;background:#fff">
+                        ${Array.from({length:24},(_,h)=>`<option value="${h}" ${sb.endHour===h?'selected':''}>${_hourLabel(h)}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            
+            <div style="padding:14px 16px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;font-size:13px;color:#78350F;line-height:1.7;margin-bottom:18px">
+                💡 <b>예시</b>: 시작 <b>밤 10시</b>, 종료 <b>아침 6시</b> → 밤 10시부터 다음 날 아침 6시까지 학생 학습 차단<br>
+                🧪 <b>테스트 팁</b>: 잠깐 현재 시각으로 설정해서 학생 계정으로 확인 후, 다시 원래 시간으로 변경하세요
+            </div>
+            
+            <div class="flex flex-gap">
+                <button class="btn-primary" onclick="saveStudyBlock()" style="background:#1E293B">🌙 잠금 설정 저장</button>
+            </div>
         </div>`;
     }
     
@@ -3841,41 +3896,6 @@ function renderSettingsForm(){
     </div>
     <!-- ━━━━━━━━━━━━ 리딩 카테고리 끝 ━━━━━━━━━━━━ -->
     
-    <!-- 🌙 야간 학습 차단 -->
-    <div class="set-section" style="margin-top:20px">
-        <div class="set-section-header" style="background:linear-gradient(135deg,#1E293B,#334155)">
-            <div class="set-section-title" style="color:#fff">🌙 야간 학습 차단</div>
-        </div>
-        <div class="set-section-body">
-            <div class="set-step-card">
-                <p class="set-step-desc">설정한 시간대에는 학생이 로그인하거나 학습할 수 없습니다. 이미 로그인된 폰도 화면이 잠깁니다. (관리자는 언제든 사용 가능)</p>
-                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;padding:12px;background:#F1F5F9;border-radius:8px;margin-bottom:12px">
-                    <input type="checkbox" id="set-sb-enabled" ${sb.enabled?'checked':''} style="width:20px;height:20px">
-                    <span style="font-weight:600">야간 학습 차단 사용하기</span>
-                </label>
-                <div class="set-input-row">
-                    <label class="set-input-label">차단 시작<span class="set-input-hint">(밤)</span></label>
-                    <div class="set-input-wrap">
-                        <select id="set-sb-start" style="padding:8px 12px;border:1px solid #D1D5DB;border-radius:8px;font-size:14px">
-                            ${Array.from({length:24},(_,h)=>`<option value="${h}" ${sb.startHour===h?'selected':''}>${_hourLabel(h)}</option>`).join('')}
-                        </select>
-                    </div>
-                </div>
-                <div class="set-input-row">
-                    <label class="set-input-label">차단 종료<span class="set-input-hint">(아침)</span></label>
-                    <div class="set-input-wrap">
-                        <select id="set-sb-end" style="padding:8px 12px;border:1px solid #D1D5DB;border-radius:8px;font-size:14px">
-                            ${Array.from({length:24},(_,h)=>`<option value="${h}" ${sb.endHour===h?'selected':''}>${_hourLabel(h)}</option>`).join('')}
-                        </select>
-                    </div>
-                </div>
-                <div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:8px;font-size:13px;color:#92400E">
-                    💡 예: 시작 <b>밤 10시</b>, 종료 <b>아침 6시</b> → 밤 10시부터 다음 날 아침 6시까지 학생 학습 차단
-                </div>
-            </div>
-        </div>
-    </div>
-    
     ${isBookEdit&&!bookOverrideOn?`</div>`:''}
     `;
 }
@@ -4016,13 +4036,6 @@ function saveSettings(){
         }
     };
     
-    // 🌙 야간 학습 차단 설정
-    out.studyBlock={
-        enabled:document.getElementById('set-sb-enabled')?.checked||false,
-        startHour:parseInt(document.getElementById('set-sb-start')?.value??22),
-        endHour:parseInt(document.getElementById('set-sb-end')?.value??6)
-    };
-    
     // 저장 분기: 글로벌 vs 교재별
     if(editingBook){
         // 교재별 별도 설정 저장
@@ -4094,6 +4107,27 @@ function toggleBookOverride(checked){
     LS.s('settings_byBook',byBook);
     render();
 }
+
+// 🌙 잠금 설정 전용 저장 (다른 학습 설정과 분리되어 단독 저장)
+function saveStudyBlock(){
+    const enabled=document.getElementById('set-sb-enabled')?.checked||false;
+    const startHour=parseInt(document.getElementById('set-sb-start')?.value??22);
+    const endHour=parseInt(document.getElementById('set-sb-end')?.value??6);
+    // rl_settings의 studyBlock만 업데이트 (다른 설정은 그대로)
+    const stored=LS.g('settings')||{};
+    stored.studyBlock={enabled,startHour,endHour};
+    LS.s('settings',stored);
+    
+    let msg;
+    if(!enabled){
+        msg=`✅ 잠금 설정 저장됨\n\n⚪ 야간 학습 차단: 꺼짐\n(학생들 24시간 자유 접속 가능)`;
+    }else{
+        msg=`✅ 잠금 설정 저장됨\n\n🌙 야간 학습 차단: 켜짐\n⏰ ${_hourLabel(startHour)} ~ ${_hourLabel(endHour)}\n\n학생 폰에 자동 배포됩니다.\n학생이 학습 페이지를 새로고침하면 즉시 적용돼요.`;
+    }
+    alert(msg);
+    render();
+}
+
 function resetSettings(){
     if(editingBook){
         if(!confirm(`${editingBook} 교재의 별도 설정만 초기화하시겠습니까?\n(다른 교재와 글로벌 설정은 그대로 유지)`))return;
