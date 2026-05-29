@@ -31,7 +31,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .field-input{width:100%;padding:14px 16px;border:1.5px solid var(--border);border-radius:var(--radius-xs);background:var(--white);color:var(--text);font-size:15px;font-family:'Noto Sans KR',sans-serif;transition:all .2s;outline:none;}
 .field-input::placeholder{color:var(--text3);}
 .field-input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(0,200,83,.12);}
-.error-box{display:none;padding:12px 16px;background:#FFF5F5;border:1px solid #FEB2B2;border-radius:var(--radius-xs);font-size:13px;color:#E53E3E;margin-bottom:16px;text-align:center;}
+.error-box{display:none;padding:12px 16px;background:#FFF5F5;border:1px solid #FEB2B2;border-radius:var(--radius-xs);font-size:13px;color:#E53E3E;margin-bottom:16px;text-align:center;white-space:pre-line;line-height:1.6;}
 .login-btn{width:100%;padding:15px;background:var(--green);color:#fff;border:none;border-radius:var(--radius-xs);font-size:16px;font-weight:700;font-family:'Noto Sans KR',sans-serif;cursor:pointer;transition:all .2s;margin-top:8px;}
 .login-btn:hover{background:var(--green-dark);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,200,83,.3);}
 .login-btn:active{transform:translateY(0);}
@@ -144,6 +144,37 @@ function initData(){
 }
 const PWD_FB_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
 
+// 🌙 야간 학습 차단 체크 — 현재 시각이 차단 시간대인지 확인
+//    rl_settings의 studyBlock 설정을 읽음 (admin이 설정 → curriculum.json으로 배포)
+function getStudyBlockStatus(){
+    try{
+        const settings=JSON.parse(RL_STORE.get('rl_settings')||'{}');
+        const sb=settings.studyBlock;
+        if(!sb||!sb.enabled) return {blocked:false};
+        const now=new Date();
+        const h=now.getHours();
+        const start=sb.startHour, end=sb.endHour;
+        let blocked;
+        if(start===end){
+            blocked=false; // 시작=종료면 차단 안 함 (24시간 차단 방지)
+        }else if(start<end){
+            // 같은 날 안 (예: 1시~6시)
+            blocked = (h>=start && h<end);
+        }else{
+            // 자정 넘김 (예: 22시~6시) — 22시 이상이거나 6시 미만
+            blocked = (h>=start || h<end);
+        }
+        return {blocked, startHour:start, endHour:end};
+    }catch(e){ return {blocked:false}; }
+}
+
+function _fmtBlockHour(h){
+    if(h===0) return '자정';
+    if(h===12) return '정오';
+    if(h<12) return `오전 ${h}시`;
+    return `오후 ${h-12}시`;
+}
+
 async function login(){
     const uid=document.getElementById('uid').value.trim();
     const pwd=document.getElementById('pwd').value;
@@ -187,6 +218,15 @@ async function login(){
     // user 정보가 로컬에 없으면 최소 정보로 구성 (Firebase 비번으로 인증된 학생)
     if(!user){
         user = {role:'student', name:uid};
+    }
+    
+    // 🌙 야간 학습 차단 — 학생만 (관리자는 언제든 로그인 가능)
+    if(user.role !== 'admin'){
+        const sb=getStudyBlockStatus();
+        if(sb.blocked){
+            showError(`🌙 지금은 학습할 수 없는 시간입니다.\n\n${_fmtBlockHour(sb.startHour)}부터 ${_fmtBlockHour(sb.endHour)}까지는\n건강한 학습 습관을 위해 접속이 제한됩니다.\n\n낮 시간에 다시 접속해주세요 😊`);
+            return;
+        }
     }
     
     RL_STORE.set('rl_current_user',JSON.stringify({id:uid,...user}));

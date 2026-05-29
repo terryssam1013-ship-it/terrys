@@ -2725,7 +2725,7 @@ function tabStudents(){
     const books=LS.g('textbooks')||{};
     return `<div class="flex flex-between mb-24">
         <div><h2>학생 관리</h2><div class="page-desc" style="margin:0">학생 계정과 레벨·교재를 관리합니다</div></div>
-        <div class="flex flex-gap"><button class="btn-primary" onclick="openModal('addStudent')">+ 학생 추가</button><button onclick="openModal('addLevel')">레벨 추가</button><button onclick="openModal('addBook')">교재 추가</button></div>
+        <div class="flex flex-gap"><button class="btn-primary" onclick="openModal('addStudent')">+ 학생 추가</button><button onclick="openModal('addLevel')">레벨 추가</button><button onclick="openModal('addBook')">교재 추가</button><button onclick="bulkResetPasswords()" style="background:#fff5f5;border:1px solid #fcc;color:#c00" title="모든 학생에게 새 비밀번호 자동 부여 + CSV 다운로드">🔐 비번 일괄 재설정</button></div>
     </div>
     <div class="card" style="padding:8px">
         <table class="tbl">
@@ -3448,6 +3448,12 @@ const DEFAULT_SETTINGS={
             target:80,
             ratio:{meaning:30,word:30,blank:40}
         }
+    },
+    // 🌙 학습 차단 시간 (학생 야간 사용 제한) — 어드민은 영향 없음
+    studyBlock:{
+        enabled:false,    // 차단 기능 사용 여부
+        startHour:22,     // 차단 시작 시각 (22 = 밤 10시)
+        endHour:6         // 차단 종료 시각 (6 = 아침 6시)
     }
 };
 function getSettings(bookName){
@@ -3467,6 +3473,8 @@ function getSettings(bookName){
             }
         });
     }
+    // 🌙 야간 학습 차단 설정 머지
+    merged.studyBlock=Object.assign({},DEFAULT_SETTINGS.studyBlock,stored.studyBlock||{});
     // 교재별 오버라이드 적용
     if(bookName){
         const byBook=LS.g('settings_byBook')||{};
@@ -3499,6 +3507,7 @@ function renderSettingsForm(){
     const s=isBookEdit&&bookOverrideOn?getSettings(editingBook):getSettings();
     const wt=s.wordTrain, wsc=s.wordSelfCheck, st=s.sentTrain, ssc=s.sentSelfCheck, wkt=s.weeklyTest;
     const vf=s.vocabFlow;
+    const sb=s.studyBlock||DEFAULT_SETTINGS.studyBlock;
     
     // 교재 선택 드롭다운
     const bookSelector=`<div class="book-selector">
@@ -3557,9 +3566,9 @@ function renderSettingsForm(){
                 <div class="set-step-title">🎮 게임 필수 완료 수</div>
                 <p class="set-step-desc">플래시 학습 후 데이체크 진입 전 필수로 완료해야 할 게임 수 (속도전/매칭/두더지 중 선택)</p>
                 <div class="set-input-row">
-                    <label class="set-input-label">필수 게임 수<span class="set-input-hint">(0=선택, 1=하나만 필수, 2~3=여러 개 필수)</span></label>
+                    <label class="set-input-label">필수 게임 수<span class="set-input-hint">(최소 1개 필수, 2~3=여러 개 필수)</span></label>
                     <div class="set-input-wrap">
-                        <input type="number" min="0" max="3" id="set-vf-games" value="${vf.gamesRequired}">
+                        <input type="number" min="1" max="3" id="set-vf-games" value="${Math.max(1, vf.gamesRequired||1)}">
                         <span class="set-input-unit">개</span>
                         <span class="set-input-default" title="기본값">기본 ${DEFAULT_SETTINGS.vocabFlow.gamesRequired}</span>
                     </div>
@@ -3832,8 +3841,53 @@ function renderSettingsForm(){
     </div>
     <!-- ━━━━━━━━━━━━ 리딩 카테고리 끝 ━━━━━━━━━━━━ -->
     
+    <!-- 🌙 야간 학습 차단 -->
+    <div class="set-section" style="margin-top:20px">
+        <div class="set-section-header" style="background:linear-gradient(135deg,#1E293B,#334155)">
+            <div class="set-section-title" style="color:#fff">🌙 야간 학습 차단</div>
+        </div>
+        <div class="set-section-body">
+            <div class="set-step-card">
+                <p class="set-step-desc">설정한 시간대에는 학생이 로그인하거나 학습할 수 없습니다. 이미 로그인된 폰도 화면이 잠깁니다. (관리자는 언제든 사용 가능)</p>
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;padding:12px;background:#F1F5F9;border-radius:8px;margin-bottom:12px">
+                    <input type="checkbox" id="set-sb-enabled" ${sb.enabled?'checked':''} style="width:20px;height:20px">
+                    <span style="font-weight:600">야간 학습 차단 사용하기</span>
+                </label>
+                <div class="set-input-row">
+                    <label class="set-input-label">차단 시작<span class="set-input-hint">(밤)</span></label>
+                    <div class="set-input-wrap">
+                        <select id="set-sb-start" style="padding:8px 12px;border:1px solid #D1D5DB;border-radius:8px;font-size:14px">
+                            ${Array.from({length:24},(_,h)=>`<option value="${h}" ${sb.startHour===h?'selected':''}>${_hourLabel(h)}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div class="set-input-row">
+                    <label class="set-input-label">차단 종료<span class="set-input-hint">(아침)</span></label>
+                    <div class="set-input-wrap">
+                        <select id="set-sb-end" style="padding:8px 12px;border:1px solid #D1D5DB;border-radius:8px;font-size:14px">
+                            ${Array.from({length:24},(_,h)=>`<option value="${h}" ${sb.endHour===h?'selected':''}>${_hourLabel(h)}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:8px;font-size:13px;color:#92400E">
+                    💡 예: 시작 <b>밤 10시</b>, 종료 <b>아침 6시</b> → 밤 10시부터 다음 날 아침 6시까지 학생 학습 차단
+                </div>
+            </div>
+        </div>
+    </div>
+    
     ${isBookEdit&&!bookOverrideOn?`</div>`:''}
     `;
+}
+
+// 시각 라벨 (0~23 → "오전 6시", "밤 10시" 등)
+function _hourLabel(h){
+    if(h===0) return '자정 (0시)';
+    if(h===12) return '정오 (12시)';
+    if(h<6) return `새벽 ${h}시`;
+    if(h<12) return `아침 ${h}시`;
+    if(h<18) return `오후 ${h}시 (${h-12}시)`;
+    return `밤 ${h}시 (${h-12}시)`;
 }
 function saveSettings(){
     const out=Object.assign({},getSettings());
@@ -3940,7 +3994,7 @@ function saveSettings(){
     const we=validRatio('주간평가',num('set-vf-we-r1',30,0,100),num('set-vf-we-r2',30,0,100),num('set-vf-we-r3',40,0,100));
     if(!we.ok)return;
     out.vocabFlow={
-        gamesRequired:num('set-vf-games',1,0,3),
+        gamesRequired:num('set-vf-games',1,1,3),
         dayCheck:{
             target:num('set-vf-dc-target',80,0,100),
             ratio:{meaning:dc.r1,word:dc.r2,blank:dc.r3}
@@ -3960,6 +4014,13 @@ function saveSettings(){
             target:num('set-vf-we-target',80,0,100),
             ratio:{meaning:we.r1,word:we.r2,blank:we.r3}
         }
+    };
+    
+    // 🌙 야간 학습 차단 설정
+    out.studyBlock={
+        enabled:document.getElementById('set-sb-enabled')?.checked||false,
+        startHour:parseInt(document.getElementById('set-sb-start')?.value??22),
+        endHour:parseInt(document.getElementById('set-sb-end')?.value??6)
     };
     
     // 저장 분기: 글로벌 vs 교재별
@@ -4070,7 +4131,7 @@ function renderModal(){
             <div><label class="label">아이디</label><input type="text" id="m-id" value="${isEdit?modal.data:''}" ${isEdit?'readonly style="background:var(--bg3)"':''}></div>
         </div>
         <div class="grid grid-2 mb-16">
-            <div><label class="label">비밀번호</label><input type="text" id="m-pwd" value="${s.password||'1234'}"></div>
+            <div><label class="label">비밀번호</label><div style="display:flex;gap:4px"><input type="text" id="m-pwd" value="${s.password||'1234'}" style="flex:1"><button type="button" class="btn btn-secondary" style="padding:6px 10px;white-space:nowrap" onclick="document.getElementById('m-pwd').value=generateSafePassword()" title="안전한 비밀번호 자동생성">🎲 자동</button></div></div>
             <div><label class="label">수업 요일반</label><div class="flex flex-gap" style="flex-wrap:wrap;padding:10px 0">${allDays.map(d=>`<label style="font-size:14px;cursor:pointer;font-weight:500"><input type="checkbox" class="day-chk" value="${d}" ${(s.days||[]).includes(d)?'checked':''} style="width:auto;margin-right:4px"> ${d}</label>`).join('')}</div></div>
         </div>
         <div class="grid grid-2 mb-16">
@@ -4540,6 +4601,8 @@ function saveStudent(editId){
     }
     users[id]=record;
     LS.s('users',users);
+    // 🔐 비번 변경됨 → Firebase에도 동기화 (학생이 다른 기기에서 새 비번으로 즉시 로그인 가능)
+    syncPasswordToFirebase(id, pwd);
     // 신규 학생 (또는 grammar 진도 미초기화 학생) — startGrammarPoint를 currentPoint로 자동 초기화
     // → 학생 본인 로그인·미리보기 모두에서 첫 학습일에 "학습하기" 버튼이 정상 표시됨
     if(startGrammarPoint>0){
@@ -4556,7 +4619,77 @@ function saveStudent(editId){
     }
     closeModal();render();
 }
-function deleteStudent(id){if(!confirm(id+' 학생을 삭제하시겠습니까?'))return;const u=LS.g('users')||{};delete u[id];LS.s('users',u);render();}
+function deleteStudent(id){if(!confirm(id+' 학생을 삭제하시겠습니까?'))return;const u=LS.g('users')||{};delete u[id];LS.s('users',u);deletePasswordFromFirebase(id);render();}
+
+// ========== 🔐 비밀번호 관리 ==========
+const ADMIN_PWD_FB_URL = 'https://terrys-d643a-default-rtdb.firebaseio.com';
+
+// 안전한 비밀번호 자동생성 (소문자+숫자 6자리, 헷갈리는 문자 제외)
+function generateSafePassword(){
+    // 0/O/o, 1/l/I 같이 헷갈리는 문자 제외
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    let pwd = '';
+    for(let i=0; i<6; i++){
+        pwd += chars[Math.floor(Math.random()*chars.length)];
+    }
+    return pwd;
+}
+
+// Firebase에 학생 비번 저장 (학생이 비번 변경했을 때 우선 적용되는 위치)
+function syncPasswordToFirebase(studentId, password){
+    fetch(ADMIN_PWD_FB_URL + '/student_passwords/' + encodeURIComponent(studentId) + '.json', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({password: password, changed: Date.now(), changedBy: 'admin'})
+    }).catch(e => console.warn('Firebase 비번 동기화 실패:', e));
+}
+
+// 학생 삭제 시 Firebase 비번 항목도 정리
+function deletePasswordFromFirebase(studentId){
+    fetch(ADMIN_PWD_FB_URL + '/student_passwords/' + encodeURIComponent(studentId) + '.json', {
+        method: 'DELETE'
+    }).catch(e => console.warn('Firebase 비번 삭제 실패:', e));
+}
+
+// 🔐 전체 학생 비번 일괄 재설정
+async function bulkResetPasswords(){
+    const users = LS.g('users') || {};
+    const students = Object.entries(users).filter(([id, u]) => u.role === 'student');
+    if(students.length === 0){ alert('학생이 없습니다'); return; }
+    
+    if(!confirm(`${students.length}명 학생 전체 비밀번호를 자동생성된 안전한 비번으로 재설정합니다.\n\n• 모든 학생이 새 비번을 받게 됩니다\n• 학생들에게 배포할 CSV 파일이 다운로드됩니다\n• 학생들은 새 비번으로 로그인 후 본인이 원하는 비번으로 다시 변경 가능합니다\n\n계속하시겠습니까?`)) return;
+    
+    const csvRows = ['이름,아이디,새 비밀번호'];
+    let updated = 0;
+    
+    for(const [id, u] of students){
+        const newPwd = generateSafePassword();
+        users[id].password = newPwd;
+        // Firebase에도 즉시 적용 (학생들이 다른 기기에서 새 비번으로 바로 로그인 가능)
+        syncPasswordToFirebase(id, newPwd);
+        csvRows.push(`"${(u.name||'').replace(/"/g,'""')}","${id}","${newPwd}"`);
+        updated++;
+    }
+    
+    LS.s('users', users);
+    
+    // CSV 다운로드 (Excel에서 한글 깨짐 방지 BOM 포함)
+    const BOM = '\uFEFF';
+    const csv = BOM + csvRows.join('\r\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dateStr = new Date().toISOString().slice(0,10);
+    a.download = `학생비번_재설정_${dateStr}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    alert(`✅ ${updated}명 학생 비번 재설정 완료\nCSV 파일이 다운로드되었습니다.\n학생들에게 새 비번을 전달하세요.`);
+    render();
+}
 
 // ========== 문법 학습 기록 조회 (학생별 모달) ==========
 function viewGrammarLog(studentId){

@@ -6640,7 +6640,57 @@ window.addEventListener('DOMContentLoaded',async()=>{
         await syncUpLocalState();
     }catch(e){console.warn('진도 동기화 실패:',e);}
     render();
+    // 🌙 야간 학습 차단 — 부팅 직후 + 1분마다 체크 (학습 중 차단 시간 되면 즉시 덮개)
+    _checkStudyBlock();
+    setInterval(_checkStudyBlock, 60000);
 });
+
+// 🌙 야간 학습 차단 체크 (학생만, 미리보기 제외)
+function getStudyBlockStatus(){
+    try{
+        const settings=JSON.parse(RL_STORE.get('rl_settings')||'{}');
+        const sb=settings.studyBlock;
+        if(!sb||!sb.enabled) return {blocked:false};
+        const h=new Date().getHours();
+        const start=sb.startHour, end=sb.endHour;
+        let blocked;
+        if(start===end) blocked=false;
+        else if(start<end) blocked=(h>=start && h<end);
+        else blocked=(h>=start || h<end);
+        return {blocked, startHour:start, endHour:end};
+    }catch(e){ return {blocked:false}; }
+}
+function _fmtBlockHour(h){
+    if(h===0) return '자정';
+    if(h===12) return '정오';
+    if(h<12) return `오전 ${h}시`;
+    return `오후 ${h-12}시`;
+}
+function _checkStudyBlock(){
+    if(isPreview()) return; // 어드민 미리보기는 차단 안 함
+    const sb=getStudyBlockStatus();
+    let overlay=document.getElementById('studyBlockOverlay');
+    if(sb.blocked){
+        if(!overlay){
+            overlay=document.createElement('div');
+            overlay.id='studyBlockOverlay';
+            overlay.style.cssText='position:fixed;inset:0;z-index:99999;background:linear-gradient(160deg,#0F172A,#1E293B);display:flex;align-items:center;justify-content:center;padding:24px;text-align:center';
+            overlay.innerHTML=`<div style="max-width:340px">
+                <div style="font-size:64px;margin-bottom:20px">🌙</div>
+                <div style="font-size:24px;font-weight:800;color:#fff;margin-bottom:14px">학습 시간이 종료되었습니다</div>
+                <div style="font-size:15px;color:#CBD5E1;line-height:1.7;margin-bottom:20px">
+                    ${_fmtBlockHour(sb.startHour)}부터 ${_fmtBlockHour(sb.endHour)}까지는<br>학습할 수 없습니다.
+                </div>
+                <div style="font-size:14px;color:#94A3B8;background:rgba(255,255,255,0.06);padding:14px 18px;border-radius:12px;line-height:1.6">
+                    충분한 수면은 학습에<br>가장 중요합니다 😊<br>내일 다시 만나요!
+                </div>
+            </div>`;
+            document.body.appendChild(overlay);
+        }
+    }else{
+        if(overlay) overlay.remove();
+    }
+}
 // 플래시카드 키보드 단축키
 window.addEventListener('keydown',(e)=>{
     if(e.target&&['INPUT','TEXTAREA'].includes(e.target.tagName))return;
