@@ -234,6 +234,8 @@ body{font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;background:#f5f
 .dc-choice-correct .dc-choice-num{background:#10B981;color:#fff}
 .dc-choice-wrong{background:#FEE2E2!important;border-color:#EF4444!important;color:#991B1B}
 .dc-choice-wrong .dc-choice-num{background:#EF4444;color:#fff}
+.dc-choice-selected{background:#EEF2FF!important;border-color:#6366F1!important;color:#3730A3}
+.dc-choice-selected .dc-choice-num{background:#6366F1;color:#fff}
 
 /* ============ 📱 모바일 화면 전반 최적화 ============ */
 @media(max-width:768px){
@@ -323,6 +325,7 @@ function getPreviewId(){return studentId;}
 const homeworkSize=Math.max(1,parseInt(params.get('homework'))||1);
 const homeworkIdx=Math.max(1,parseInt(params.get('idx'))||1); // 1-indexed
 const startDayNum=Math.max(1,parseInt(params.get('startDay'))||1); // 첫 DAY 번호
+console.log('[단어 진입] URL params → homework=',params.get('homework'),'idx=',params.get('idx'),'startDay=',params.get('startDay'),'day=',params.get('day'),'| 파싱결과 homeworkSize=',homeworkSize,'homeworkIdx=',homeworkIdx,'startDayNum=',startDayNum);
 const isExamMode=params.get('exam')==='1'; // 실전평가 모드
 const isSummaryMode=params.get('summary')==='1'; // 종합 요약 모드 (셀프체크 통과 후)
 // 🟠 주간평가 모드 — weekly=train(주간 훈련) 또는 weekly=exam(주간 실전)
@@ -394,7 +397,7 @@ let state={
 // ========== vocabFlow 설정 가져오기 (admin 설정 반영) ==========
 function getVocabFlowSettings(){
     const defaults={
-        gamesRequired:1,
+        gamesRequired:0,
         dayCheck:{target:80, ratio:{meaning:30,word:30,blank:40}},
         selfCheck:{total:30, target:80, ratio:{meaning:30,word:30,blank:40}},
         realExam:{total:30, target:80, ratio:{meaning:30,word:30,blank:40}},
@@ -404,8 +407,8 @@ function getVocabFlowSettings(){
         const settings=JSON.parse(RL_STORE.get('rl_settings')||'{}');
         const vf=settings.vocabFlow||{};
         return {
-            // 최소 1개 게임은 무조건 완료해야 데이체크 가능 (어드민 설정과 무관)
-            gamesRequired: Math.max(1, vf.gamesRequired!==undefined?vf.gamesRequired:defaults.gamesRequired),
+            // 게임은 선택 — 어드민 설정값 그대로 사용, 미설정 시 0개(게임 없이 데이체크 진입)
+            gamesRequired: Math.max(0, vf.gamesRequired!==undefined?vf.gamesRequired:defaults.gamesRequired),
             dayCheck:{
                 target: vf.dayCheck?.target!==undefined?vf.dayCheck.target:defaults.dayCheck.target,
                 ratio: vf.dayCheck?.ratio||defaults.dayCheck.ratio
@@ -577,7 +580,8 @@ function _progressStorageKey(){
 }
 
 function saveLearningProgress(){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 _progressStorageKey()가 rl_pv_ 키를 반환하므로 실데이터와 분리되어 안전.
+    //   (이전엔 여기서 저장을 막아 테스트 시 진행이 안 남던 문제 → 미리보기도 저장 허용)
     if(!state.deck||!state.day)return;
     try{
         const key=_progressStorageKey();
@@ -773,9 +777,9 @@ function renderSummary(){
             const dcUnlocked=gamesDone>=gamesNeeded;
             const dcScore=getDayCheckScore(state.deck.id,state.day.id);
             return `
-            <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:14px;font-weight:700;color:var(--green-d)">🔓 게임 모드 잠금해제!</div>
+            <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:14px;font-weight:700;color:var(--green-d)">${gamesNeeded>0?'🔓 게임 모드 잠금해제!':'🎮 게임으로 복습하기 (선택)'}</div>
             <div style="margin-top:8px;font-size:12px;color:var(--gray);text-align:center">
-                ${gamesNeeded>0?`데이체크 진입까지 게임 ${gamesDone}/${gamesNeeded}개 완료`:'게임은 모두 선택입니다'}
+                ${gamesNeeded>0?`데이체크 진입까지 게임 ${gamesDone}/${gamesNeeded}개 완료`:'게임은 선택이에요. 바로 데이체크로 가도 됩니다'}
             </div>
             <div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:480px;margin-left:auto;margin-right:auto">
                 <button class="nav-btn nav-btn-primary" onclick="startSpeedGame()" style="background:#F59E0B;border-color:#F59E0B">⚡ 속도전${state.gamesCompleted.has('speed')?' ✓':''}</button>
@@ -1652,7 +1656,7 @@ function endMoleGame(){
 function saveGameScore(gameType,score,accuracy){
     // 게임 완료 추적 (데이체크 잠금해제 조건)
     state.gamesCompleted.add(gameType);
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     try{
         const key='rl_vocab_game_scores';
         const all=JSON.parse(RL_STORE.get(key)||'{}');
@@ -1691,11 +1695,15 @@ function _dayCheckStorageKey(){
     if(isPreview){
         return 'rl_pv_'+studentId+'_vc_daycheck';
     }
+    try{
+        const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');
+        if(u&&u.id) return 'rl_vc_daycheck_'+u.id;
+    }catch(e){}
     return 'rl_vc_daycheck';
 }
 
 function saveDayCheckScore(deckId,dayId,score,passed){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     try{
         const key=_dayCheckStorageKey();
         const all=JSON.parse(RL_STORE.get(key)||'{}');
@@ -1727,7 +1735,7 @@ function _dayCheckProgressKey(){
     return 'rl_vc_daycheck_progress';
 }
 function saveDayCheckProgress(){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     if(!state.dayCheck||!state.deck||!state.day)return;
     try{
         const key=_dayCheckProgressKey();
@@ -1977,42 +1985,39 @@ function renderDayCheckResult(){
     const total=dc.questions.length;
     const correct=dc.answers.filter(a=>a.correct).length;
     const score=Math.round(correct/total*100);
-    const passed=score>=vfs.dayCheck.target;
+    // 데이체크는 커트라인 없음 — 끝까지 풀면 무조건 통과(완료). 점수는 참고용으로만 기록.
+    const passed=true;
+    const scoreReached=score>=vfs.dayCheck.target; // 목표 도달 여부 (표시용)
     
-    // 점수 저장
-    saveDayCheckScore(state.deck.id,state.day.id,score,passed);
+    // 점수 저장 (passed=true로 저장 → 셀프체크 진입 자격)
+    saveDayCheckScore(state.deck.id,state.day.id,score,true);
     clearDayCheckProgress(); // 완료 → 진행 삭제 (재시험은 새 문제로)
     
     const wrongs=dc.answers.filter(a=>!a.correct);
     
-    // 다음 단계 버튼 결정
+    // 다음 단계 버튼 결정 (데이체크는 끝까지 풀면 항상 다음 단계로)
     // 한 수업에 여러 DAY (homework) 진행 시:
-    // - 통과 + 마지막 DAY가 아니면 → 다음 DAY 학습 버튼
-    // - 통과 + 마지막 DAY면 → 셀프체크 가능 여부 체크
+    // - 마지막 DAY가 아니면 → 다음 DAY 학습 버튼
+    // - 마지막 DAY면 → 셀프체크 버튼
     let nextStepHTML='';
-    if(passed){
-        if(homeworkIdx<homeworkSize){
-            // 다음 DAY 학습 진행
-            const nextDayNum=startDayNum+homeworkIdx; // homeworkIdx가 1이면 startDay+1
-            const nextDayObj=state.deck.days[nextDayNum-1];
-            if(nextDayObj){
-                const nextUrl=`vocab-learn.html?deck=${encodeURIComponent(state.deck.id)}&day=${encodeURIComponent(nextDayObj.id)}&homework=${homeworkSize}&idx=${homeworkIdx+1}&startDay=${startDayNum}${isPreview?'&preview=1':''}`;
-                nextStepHTML=`<button class="nav-btn nav-btn-primary" onclick="location.href='${nextUrl}'" style="background:#10B981;border-color:#10B981;color:#fff;width:100%;padding:14px;font-size:15px">📖 DAY${nextDayNum} 학습 시작 →</button>`;
-            }
-        }else{
-            // 마지막 DAY 통과 — 셀프체크 가능 여부 확인
-            // homework=1이면 startDayNum만, homework=2면 startDayNum, startDayNum+1 모두 통과해야 함
-            const allDaysPassed=_checkAllHomeworkDaysPassed();
-            if(allDaysPassed){
-                nextStepHTML=`<button class="nav-btn nav-btn-primary" onclick="startSelfCheck()" style="background:#A855F7;border-color:#A855F7;color:#fff;width:100%;padding:14px;font-size:15px">📝 셀프체크 시작 (${homeworkSize}개 DAY 누적)</button>`;
-            }
+    console.log('[단어 데이체크 완료] homeworkSize=',homeworkSize,'homeworkIdx=',homeworkIdx,'startDayNum=',startDayNum,'score=',score,'→ 분기:',(homeworkIdx<homeworkSize)?'다음DAY':'셀프체크');
+    if(homeworkIdx<homeworkSize){
+        // 다음 DAY 학습 진행
+        const nextDayNum=startDayNum+homeworkIdx; // homeworkIdx가 1이면 startDay+1
+        const nextDayObj=state.deck.days[nextDayNum-1];
+        if(nextDayObj){
+            const nextUrl=`vocab-learn.html?deck=${encodeURIComponent(state.deck.id)}&day=${encodeURIComponent(nextDayObj.id)}&homework=${homeworkSize}&idx=${homeworkIdx+1}&startDay=${startDayNum}${isPreview?'&preview=1':''}`;
+            nextStepHTML=`<button class="nav-btn nav-btn-primary" onclick="location.href='${nextUrl}'" style="background:#10B981;border-color:#10B981;color:#fff;width:100%;padding:14px;font-size:15px">📖 DAY${nextDayNum} 학습 시작 →</button>`;
         }
+    }else{
+        // 마지막 DAY 완료 → 셀프체크 버튼 (커트라인 없이 항상 표시)
+        nextStepHTML=`<button class="nav-btn nav-btn-primary" onclick="startSelfCheck()" style="background:#A855F7;border-color:#A855F7;color:#fff;width:100%;padding:14px;font-size:15px">📝 셀프체크 시작 (${homeworkSize>1?homeworkSize+'개 DAY 누적':'테스트'})</button>`;
     }
     
     document.getElementById('app').innerHTML=`<div class="summary-screen">
-        <div class="summary-emoji">${passed?'🎉':'📝'}</div>
-        <div class="summary-title">${passed?'데이체크 통과!':'재시험이 필요해요'}</div>
-        <div class="summary-sub">${score}점 ${passed?'· 목표':'· 목표'} ${vfs.dayCheck.target}점</div>
+        <div class="summary-emoji">${scoreReached?'🎉':'✅'}</div>
+        <div class="summary-title">데이체크 완료!</div>
+        <div class="summary-sub">${score}점 · ${scoreReached?`목표 ${vfs.dayCheck.target}점 달성!`:'이제 셀프체크에 도전해요'}</div>
         <div class="summary-stats">
             <div class="summary-stat"><div class="summary-stat-num">${total}</div><div class="summary-stat-label">전체</div></div>
             <div class="summary-stat"><div class="summary-stat-num" style="color:var(--green-d)">${correct}</div><div class="summary-stat-label">정답</div></div>
@@ -2045,8 +2050,9 @@ function renderDayCheckResult(){
         
         <div class="summary-cta" style="margin-top:20px;flex-direction:column;gap:8px">
             ${nextStepHTML}
-            ${!passed?`<button class="nav-btn nav-btn-primary" onclick="startDayCheck()" style="background:#3B82F6;border-color:#3B82F6;width:100%">↺ 재시험</button>`:''}
-            <button class="nav-btn" onclick="state.dayCheck=null;state.done=true;render()" style="width:100%">📋 학습 결과 화면</button>
+            <div style="font-size:12px;color:var(--gray);text-align:center;margin:2px 0">자신 없으면 아래로 더 연습해도 좋아요 (선택)</div>
+            <button class="nav-btn" onclick="startDayCheck()" style="width:100%">↺ 데이체크 다시 풀기</button>
+            <button class="nav-btn" onclick="state.dayCheck=null;state.done=true;render()" style="width:100%">📋 학습 결과 화면 (플래시·게임)</button>
             <button class="nav-btn" onclick="goBack()" style="width:100%">📅 학습일정으로</button>
         </div>
     </div>`;
@@ -2074,13 +2080,15 @@ function _checkAllHomeworkDaysPassed(){
 // ========================================================================
 
 function _selfCheckStorageKey(){
-    if(typeof isPreview==='function'&&isPreview){
-        // isPreview는 변수 (URL param 기반)
-    }
     if(isPreview){
         const pid=typeof getPreviewId==='function'?getPreviewId():'pv';
         return 'rl_pv_'+pid+'_vc_selfcheck';
     }
+    // 학생 본인 ID로 분리 → 학생 간 기록 섞임 방지
+    try{
+        const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');
+        if(u&&u.id) return 'rl_vc_selfcheck_'+u.id;
+    }catch(e){}
     return 'rl_vc_selfcheck';
 }
 
@@ -2102,7 +2110,7 @@ function _selfCheckProgressKey(){
     return 'rl_vc_selfcheck_progress';
 }
 function saveSelfCheckProgress(){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     if(!state.selfCheck)return;
     try{
         const key=_selfCheckProgressKey();
@@ -2132,7 +2140,7 @@ function clearSelfCheckProgress(){
 }
 
 function saveSelfCheckScore(score,passed,questions,answers){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     try{
         const key=_selfCheckStorageKey();
         const all=JSON.parse(RL_STORE.get(key)||'{}');
@@ -2309,21 +2317,19 @@ function answerSelfCheck(choiceIdx){
     sc.answers.push({questionIdx:sc.idx,choiceIdx,correct:isCorrect,question:q});
     saveSelfCheckProgress(); // 진행 저장 (도중에 나가도 이어 풀기 가능)
     
+    // 실전 시험 방식: 정답/오답을 바로 보여주지 않고 선택만 표시 후 즉시 다음 문제로.
+    //   (정답 여부와 오답 풀이는 마지막 결과 화면에서 한 번에 확인)
     const buttons=document.querySelectorAll('.dc-choice');
     buttons.forEach((btn,i)=>{
         btn.disabled=true;
-        if(i===q.correctIndex)btn.classList.add('dc-choice-correct');
-        if(i===choiceIdx&&!isCorrect)btn.classList.add('dc-choice-wrong');
+        if(i===choiceIdx)btn.classList.add('dc-choice-selected'); // 내가 고른 것만 표시 (정답/오답 색 없음)
     });
-    
-    if(isCorrect){playCorrectSound&&playCorrectSound();}
-    else{playWrongSound&&playWrongSound();}
     
     setTimeout(()=>{
         sc.idx++;
         if(sc.idx>=sc.questions.length)renderSelfCheckResult();
         else renderSelfCheck();
-    },isCorrect?700:1200);
+    },200);
 }
 
 function renderSelfCheckResult(){
@@ -2421,11 +2427,15 @@ function _realExamStorageKey(){
         const pid=typeof getPreviewId==='function'?getPreviewId():'pv';
         return 'rl_pv_'+pid+'_vc_realexam';
     }
+    try{
+        const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');
+        if(u&&u.id) return 'rl_vc_realexam_'+u.id;
+    }catch(e){}
     return 'rl_vc_realexam';
 }
 
 function saveRealExamScore(score,questions,answers){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     try{
         const key=_realExamStorageKey();
         const all=JSON.parse(RL_STORE.get(key)||'{}');
@@ -2472,7 +2482,7 @@ function _realExamProgressKey(){
     return 'rl_vc_realexam_progress';
 }
 function saveRealExamProgress(){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     if(!state.realExam)return;
     try{
         const key=_realExamProgressKey();
@@ -2603,21 +2613,19 @@ function answerRealExam(choiceIdx){
     re.answers.push({questionIdx:re.idx,choiceIdx,correct:isCorrect,question:q});
     saveRealExamProgress(); // 진행 저장 (도중에 나가도 이어 풀기)
     
+    // 실전 시험 방식: 정답/오답 즉시 표시 안 함. 내가 고른 것만 표시 후 바로 다음 문제로.
+    //   (정답 여부·오답 풀이는 마지막 결과 화면에서 확인)
     const buttons=document.querySelectorAll('.dc-choice');
     buttons.forEach((btn,i)=>{
         btn.disabled=true;
-        if(i===q.correctIndex)btn.classList.add('dc-choice-correct');
-        if(i===choiceIdx&&!isCorrect)btn.classList.add('dc-choice-wrong');
+        if(i===choiceIdx)btn.classList.add('dc-choice-selected');
     });
-    
-    if(isCorrect){playCorrectSound&&playCorrectSound();}
-    else{playWrongSound&&playWrongSound();}
     
     setTimeout(()=>{
         re.idx++;
         if(re.idx>=re.questions.length)renderRealExamResult();
         else renderRealExam();
-    },isCorrect?700:1200);
+    },200);
 }
 
 function renderRealExamResult(){
@@ -2693,6 +2701,10 @@ function _weeklyExamStorageKey(mode){
         const pid=typeof getPreviewId==='function'?getPreviewId():'pv';
         return 'rl_pv_'+pid+'_'+base;
     }
+    try{
+        const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');
+        if(u&&u.id) return 'rl_'+base+'_'+u.id;
+    }catch(e){}
     return 'rl_'+base;
 }
 
@@ -2706,7 +2718,7 @@ function _weeklyExamProgressKey(mode){
 }
 
 function saveWeeklyExamProgress(){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     if(!state.weeklyExam)return;
     try{
         const key=_weeklyExamProgressKey(state.weeklyExam.mode);
@@ -2738,7 +2750,7 @@ function clearWeeklyExamProgress(mode){
 }
 
 function saveWeeklyExamScore(mode,score,passed){
-    if(isPreview) return; // 어드민 미리보기 모드는 데이터 저장 차단 (학생 실 데이터 보호)
+    // 미리보기는 rl_pv_ 키로 저장되어 실데이터와 분리됨 (테스트 진행 저장 허용)
     try{
         const key=_weeklyExamStorageKey(mode);
         const all=JSON.parse(RL_STORE.get(key)||'{}');
@@ -2905,20 +2917,32 @@ function answerWeeklyExam(choiceIdx){
     saveWeeklyExamProgress();
     
     const buttons=document.querySelectorAll('.dc-choice');
-    buttons.forEach((btn,i)=>{
-        btn.disabled=true;
-        if(i===q.correctIndex)btn.classList.add('dc-choice-correct');
-        if(i===choiceIdx&&!isCorrect)btn.classList.add('dc-choice-wrong');
-    });
-    
-    if(isCorrect){playCorrectSound&&playCorrectSound();}
-    else{playWrongSound&&playWrongSound();}
-    
-    setTimeout(()=>{
-        we.idx++;
-        if(we.idx>=we.questions.length)renderWeeklyExamResult();
-        else renderWeeklyExam();
-    },isCorrect?700:1200);
+    // 주간평가 실전(exam)은 시험 방식: 즉시 채점 안 함. 훈련(train)은 연습이라 즉시 피드백 유지.
+    const _isExamMode = (we.mode==='exam' || weeklyMode==='exam');
+    if(_isExamMode){
+        buttons.forEach((btn,i)=>{
+            btn.disabled=true;
+            if(i===choiceIdx)btn.classList.add('dc-choice-selected');
+        });
+        setTimeout(()=>{
+            we.idx++;
+            if(we.idx>=we.questions.length)renderWeeklyExamResult();
+            else renderWeeklyExam();
+        },200);
+    }else{
+        buttons.forEach((btn,i)=>{
+            btn.disabled=true;
+            if(i===q.correctIndex)btn.classList.add('dc-choice-correct');
+            if(i===choiceIdx&&!isCorrect)btn.classList.add('dc-choice-wrong');
+        });
+        if(isCorrect){playCorrectSound&&playCorrectSound();}
+        else{playWrongSound&&playWrongSound();}
+        setTimeout(()=>{
+            we.idx++;
+            if(we.idx>=we.questions.length)renderWeeklyExamResult();
+            else renderWeeklyExam();
+        },isCorrect?700:1200);
+    }
 }
 
 function renderWeeklyExamResult(){
@@ -3293,6 +3317,30 @@ function _showSelfCheckGate(){
 
 // 🚪 실전평가 게이트 화면 — 셀프체크 통과 후, 실전평가 시작 안내
 function _showRealExamGate(){
+    // 🧪 새 흐름(박민성 등): exam phase 전에는 실전평가 진입 차단
+    try{
+        const FLOW_IDS = ['01087080656'];
+        const _sid = (typeof studentId!=='undefined' && studentId && studentId!=='pv') ? studentId
+                   : (function(){try{const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');return u&&u.id;}catch(e){return null;}})();
+        if(_sid && FLOW_IDS.includes(String(_sid))){
+            let _phase='selfcheck';
+            try{const _f=JSON.parse(localStorage.getItem('rl_flow_'+_sid)||'null'); if(_f&&_f.phase) _phase=_f.phase;}catch(e){}
+            if(_phase!=='exam'){
+                document.getElementById('app').innerHTML=`<div class="summary-screen">
+                    <div style="text-align:center;padding:22px 18px;background:#D1FAE5;border:2px solid #10B981;border-radius:16px;margin:10px 0">
+                        <div style="font-size:38px;margin-bottom:6px">📚✅</div>
+                        <div style="font-size:19px;font-weight:800;color:#065F46">단어 숙제 완료!</div>
+                        <div style="font-size:13px;color:#047857;margin-top:8px;line-height:1.7">셀프체크까지 끝냈어요. 여기까지가 오늘 단어 숙제예요.<br>리딩·문법도 끝낸 뒤 학습일정에서 <b>[숙제 완료]</b>를 누르면<br>실전평가가 열립니다 (학원에서 진행).</div>
+                    </div>
+                    <div class="summary-cta" style="margin-top:8px;flex-direction:column;gap:8px">
+                        <button class="nav-btn nav-btn-primary" onclick="goBack()" style="width:100%;padding:14px;font-size:15px">📅 학습일정으로</button>
+                    </div>
+                </div>`;
+                window.scrollTo({top:0,behavior:'instant'});
+                return;
+            }
+        }
+    }catch(e){}
     const reRec=(function(){try{const all=JSON.parse(RL_STORE.get(_realExamStorageKey())||'{}');return all[_selfCheckKey()]||null;}catch(e){return null;}})();
     const vfs=getVocabFlowSettings();
     document.getElementById('app').innerHTML=`<div class="summary-screen">
@@ -3344,6 +3392,16 @@ async function initVocabLearn(){
     
     // 실전평가 모드면 바로 실전평가 시작 (플래시/게임/데이체크 건너뜀)
     if(isExamMode){
+        // 🧪 새 흐름(박민성 등): exam phase 전에는 실전 직접 진입도 차단
+        try{
+            const FLOW_IDS=['01087080656'];
+            const _sid=(studentId&&studentId!=='pv')?studentId:(function(){try{const u=JSON.parse(localStorage.getItem('rl_current_user')||'null');return u&&u.id;}catch(e){return null;}})();
+            if(_sid && FLOW_IDS.includes(String(_sid))){
+                let _phase='selfcheck';
+                try{const _f=JSON.parse(localStorage.getItem('rl_flow_'+_sid)||'null'); if(_f&&_f.phase) _phase=_f.phase;}catch(e){}
+                if(_phase!=='exam'){ _showRealExamGate(); return; }
+            }
+        }catch(e){}
         state.deck=loaded.deck;
         state.day=loaded.day;
         state.words=loaded.day.words.slice();
@@ -3384,7 +3442,7 @@ async function initVocabLearn(){
     //    URL의 day/idx 파라미터에 의존하지 않고, 저장된 통과 기록으로 현재 위치 판단
     if(!isPreview){
         try{
-            const dcAll=JSON.parse(RL_STORE.get('rl_vc_daycheck')||'{}');
+            const dcAll=JSON.parse(RL_STORE.get(_dayCheckStorageKey())||'{}');
             
             // (A) 아직 데이체크 통과 못 한 첫 DAY 찾기
             let firstUnpassedDayNum=null;
@@ -3437,8 +3495,8 @@ async function initVocabLearn(){
     // 3) 학습 진도 (knewSet) 복원
     //    progress.done이 true면 → 결과 화면 표시 (마지막 학습 위치)
     //    아니면 안 외운 단어부터 이어서 학습
-    //    어드민 미리보기는 진도 무시하고 항상 처음부터
-    const progress=isPreview?null:loadLearningProgress();
+    //    미리보기도 rl_pv_ 키에서 진행을 복원 (테스트 시 이어하기 가능)
+    const progress=loadLearningProgress();
     
     if(progress&&progress.knew&&progress.knew.length>0){
         const knewSet=new Set(progress.knew);
